@@ -481,20 +481,129 @@ def fetch_bursa_sentiment() -> dict | None:
             app.logger.error("Ralat fetch_bursa_sentiment: %s", e)
     return None
 
-def get_fear_and_greed_card() -> str:
-    cnn = fetch_cnn_fgi()
-    cmc = fetch_crypto_fgi()
-    bursa = fetch_bursa_sentiment()
+def get_sentiment_commentary(market: str, score: int, rating: str) -> str:
+    """Ulasan ringkas psikologi pasaran berdasarkan skor dan zon sentimen."""
+    r = str(rating).upper()
+    if "EXTREME FEAR" in r or score <= 24:
+        return "Fasa panik pasaran melampau — peluang potensi zon diskaun / oversold bagi pelabur berdisiplin."
+    elif "FEAR" in r or score <= 44:
+        if market == "bursa":
+            return "Pasaran defensif — sentimen berhati-hati dengan tekanan kaunter rugi mendominasi pasaran."
+        return "Pasaran defensif — tekanan jualan masih membayangi pergerakan harga."
+    elif "NEUTRAL" in r or score <= 55:
+        return "Keseimbangan pembeli & penjual — pasaran berkonsolidasi mencari arah seterusnya."
+    elif "EXTREME GREED" in r or score >= 76:
+        return "Euforia belian memuncak — sentiasa berwaspada potensi pembetulan teknikal (overbought)."
+    else:
+        return "Optimisme belian kukuh — momentum pasaran disokong aliran belian aktif."
 
+def generate_fgi_triple_gauge_chart(cnn: dict | None, cmc: dict | None, bursa: dict | None) -> bytes | None:
+    """Menjana gambar grafik tolok separa bulat 3-dalam-1 (US, Crypto, Bursa) berkualiti tinggi."""
+    try:
+        import numpy as np
+        from matplotlib.patches import Wedge, Circle, Polygon
+
+        fig, axes = plt.subplots(1, 3, figsize=(13, 4.2), facecolor='#0B0E14')
+
+        cnn_score = cnn.get("score", 50) if cnn else 50
+        cnn_rating = cnn.get("rating", "NEUTRAL") if cnn else "N/A"
+
+        cmc_score = cmc.get("score", 50) if cmc else 50
+        cmc_rating = cmc.get("rating", "NEUTRAL") if cmc else "N/A"
+
+        bursa_score = bursa.get("score", 50) if bursa else 50
+        bursa_rating = bursa.get("rating", "NEUTRAL") if bursa else "N/A"
+
+        markets = [
+            ("US STOCKS (CNN)", cnn_score, cnn_rating),
+            ("CRYPTO (CMC)", cmc_score, cmc_rating),
+            ("BURSA MALAYSIA", bursa_score, bursa_rating),
+        ]
+
+        zones = [
+            (136.8, 180, '#EA3943'),   # Extreme Fear
+            (100.8, 136.8, '#F6851B'),  # Fear
+            (81.0, 100.8, '#F3D42F'),   # Neutral
+            (45.0, 81.0, '#93D900'),    # Greed
+            (0.0, 45.0, '#16C784')      # Extreme Greed
+        ]
+
+        for ax, (m_title, m_score, m_sent) in zip(axes, markets):
+            ax.set_facecolor('#0B0E14')
+            cx, cy = 0, 0
+            for t1, t2, col in zones:
+                w = Wedge((cx, cy), 1.0, t1, t2, width=0.30, facecolor=col, edgecolor='#0B0E14', linewidth=1.5, alpha=0.95)
+                ax.add_patch(w)
+
+            angle_deg = 180.0 - (m_score * 1.8)
+            angle_rad = np.radians(angle_deg)
+            arrow_x = cx + 0.82 * np.cos(angle_rad)
+            arrow_y = cy + 0.82 * np.sin(angle_rad)
+
+            perp_angle = angle_rad + np.pi / 2
+            base_w = 0.035
+            b_x1 = cx + base_w * np.cos(perp_angle)
+            b_y1 = cy + base_w * np.sin(perp_angle)
+            b_x2 = cx - base_w * np.cos(perp_angle)
+            b_y2 = cy - base_w * np.sin(perp_angle)
+
+            needle = Polygon([
+                (b_x1, b_y1), (arrow_x, arrow_y), (b_x2, b_y2),
+                (cx - 0.05 * np.cos(angle_rad), cy - 0.05 * np.sin(angle_rad))
+            ], facecolor='#FFFFFF', edgecolor='#0B0E14', linewidth=1.2, zorder=10)
+            ax.add_patch(needle)
+
+            p_out = Circle((cx, cy), 0.10, facecolor='#1E222D', edgecolor='#FFFFFF', linewidth=1.5, zorder=11)
+            p_in = Circle((cx, cy), 0.04, facecolor='#00F0FF', zorder=12)
+            ax.add_patch(p_out)
+            ax.add_patch(p_in)
+
+            sent_upper = str(m_sent).upper()
+            if "EXTREME GREED" in sent_upper:
+                s_col = '#16C784'
+            elif "GREED" in sent_upper:
+                s_col = '#93D900'
+            elif "EXTREME FEAR" in sent_upper:
+                s_col = '#EA3943'
+            elif "FEAR" in sent_upper:
+                s_col = '#F6851B'
+            else:
+                s_col = '#F3D42F'
+
+            ax.text(cx, cy - 0.28, f'{m_score}/100', fontsize=18, fontweight='bold', color='#FFFFFF', ha='center', va='center')
+            ax.text(cx, cy - 0.46, m_sent, fontsize=12, fontweight='bold', color=s_col, ha='center', va='center')
+            ax.text(cx, cy + 1.18, m_title, fontsize=11, fontweight='bold', color='#E1E3E6', ha='center', va='center')
+            ax.text(cx - 1.05, cy - 0.02, '0', fontsize=8, color='#848E9C', ha='center', va='top')
+            ax.text(cx + 1.05, cy - 0.02, '100', fontsize=8, color='#848E9C', ha='center', va='top')
+
+            ax.set_xlim(-1.25, 1.25)
+            ax.set_ylim(-0.6, 1.35)
+            ax.set_aspect('equal')
+            ax.axis('off')
+
+        plt.suptitle('Market Sentiment & Fear & Greed Gauges | LangkahTrade AI', color='#848E9C', fontsize=11, y=0.98)
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue()
+    except Exception as e:
+        app.logger.error("Ralat generate_fgi_triple_gauge_chart: %s", e)
+        return None
+
+def format_fgi_card(cnn: dict | None, cmc: dict | None, bursa: dict | None) -> str:
     lines = [
-        "😱 <b>Fear & Greed Index (Sentimen Pasaran Global & Tempatan)</b>\n"
+        "😱 <b>Fear & Greed Index (Sentimen Pasaran)</b>\n"
     ]
 
     # 1. US Stocks (CNN)
     if cnn:
         lines.append(f"🇺🇸 <b>US STOCKS (CNN):</b> <code>{cnn['score']}/100</code> — <b>{cnn['rating']}</b>")
         lines.append(f"<code>{render_gauge_bar(cnn['score'])}</code>")
-        lines.append(f"<i>1 week ago: {cnn['prev_1w']}  |  1 month ago: {cnn['prev_1m']}  |  1 year ago: {cnn['prev_1y']}</i>\n")
+        lines.append(f"<i>1 week: {cnn['prev_1w']}  |  1 month: {cnn['prev_1m']}  |  1 year: {cnn['prev_1y']}</i>")
+        lines.append(f"💡 <i>Ulasan: {get_sentiment_commentary('us', cnn['score'], cnn['rating'])}</i>\n")
     else:
         lines.append("🇺🇸 <b>US STOCKS (CNN):</b> <i>Data tidak tersedia buat masa ini.</i>\n")
 
@@ -502,28 +611,34 @@ def get_fear_and_greed_card() -> str:
     if cmc:
         lines.append(f"🪙 <b>CRYPTO (CoinMarketCap):</b> <code>{cmc['score']}/100</code> — <b>{cmc['rating']}</b>")
         lines.append(f"<code>{render_gauge_bar(cmc['score'])}</code>")
-        history_parts = [f"1 week ago: {cmc['prev_1w_score']} ({cmc['prev_1w_rating']})"]
+        history_parts = [f"1 week: {cmc['prev_1w_score']} ({cmc['prev_1w_rating']})"]
         if cmc.get("prev_1m_score") is not None:
             history_parts.append(f"Last month: {cmc['prev_1m_score']} ({cmc['prev_1m_rating']})")
-        lines.append(f"<i>{'  |  '.join(history_parts)}</i>\n")
+        lines.append(f"<i>{'  |  '.join(history_parts)}</i>")
+        lines.append(f"💡 <i>Ulasan: {get_sentiment_commentary('crypto', cmc['score'], cmc['rating'])}</i>\n")
     else:
         lines.append("🪙 <b>CRYPTO (CoinMarketCap):</b> <i>Data tidak tersedia buat masa ini.</i>\n")
 
     # 3. Bursa Malaysia
     if bursa:
-        lines.append(f"🇲🇾 <b>BURSA MALAYSIA — Market Sentiment Index:</b> <code>{bursa['score']}/100</code> — <b>{bursa['rating']}</b>")
+        lines.append(f"🇲🇾 <b>BURSA MALAYSIA — Market Sentiment:</b> <code>{bursa['score']}/100</code> — <b>{bursa['rating']}</b>")
         lines.append(f"<code>{render_gauge_bar(bursa['score'])}</code>")
         if bursa.get("gainers") != "-" and bursa.get("losers") != "-":
-            lines.append(f"<i>Statistik Pasaran: 🟢 Gainer {bursa['gainers']}  |  🔴 Loser {bursa['losers']}</i>\n")
-        else:
-            lines.append("")
+            lines.append(f"📊 <i>Statistik Pasaran: 🟢 Gainer {bursa['gainers']}  |  🔴 Loser {bursa['losers']}</i>")
+        lines.append(f"💡 <i>Ulasan: {get_sentiment_commentary('bursa', bursa['score'], bursa['rating'])}</i>\n")
     else:
         lines.append("🇲🇾 <b>BURSA MALAYSIA:</b> <i>Data sentimen tidak tersedia buat masa ini.</i>\n")
 
-    lines.append("📌 <i>0 = Extreme Fear, 100 = Extreme Greed. Not financial advice.</i>\n")
-    lines.append(DISCLAIMER_HTML)
+    lines.append("📌 <i>0 = Extreme Fear, 100 = Extreme Greed. Not financial advice.</i>")
+    lines.append("⚠️ <i>Penafian: Rujukan teknikal sahaja, bukan nasihat kewangan atau pelaburan (DYOR).</i>")
 
     return "\n".join(lines)
+
+def get_fear_and_greed_card() -> str:
+    cnn = fetch_cnn_fgi()
+    cmc = fetch_crypto_fgi()
+    bursa = fetch_bursa_sentiment()
+    return format_fgi_card(cnn, cmc, bursa)
 
 
 # ── Telegram Helper ───────────────────────────────────────────────────────────
@@ -1272,7 +1387,15 @@ def telegram_webhook():
             "sentimen crypto", "sentimen kripto", "sentimen us",
             "index sentimen", "indeks sentimen", "sentimen semasa"
         ]):
-            send_telegram(get_fear_and_greed_card(), chat_id=chat_id)
+            cnn = fetch_cnn_fgi()
+            cmc = fetch_crypto_fgi()
+            bursa = fetch_bursa_sentiment()
+            fgi_text = format_fgi_card(cnn, cmc, bursa)
+            gauge_img = generate_fgi_triple_gauge_chart(cnn, cmc, bursa)
+            if gauge_img:
+                send_telegram_photo(gauge_img, fgi_text, chat_id=chat_id)
+            else:
+                send_telegram(fgi_text, chat_id=chat_id)
             return "OK", 200
 
         # 2.5 Arahan Standard /aktif atau /active
