@@ -89,27 +89,23 @@ INTERVAL_MAP = {
     "1w": "1W",
 }
 
-def clean_crypto_symbol(raw: str) -> str:
-    raw = raw.upper().strip().replace("/", "").replace("-", "").replace("PERP", "")
-    known = {
-        "BITCOIN": "BTCUSDT",
-        "ETHEREUM": "ETHUSDT",
-        "SOLANA": "SOLUSDT",
-        "RIPPLE": "XRPUSDT",
-        "DOGECOIN": "DOGEUSDT",
-        "CARDANO": "ADAUSDT",
-    }
-    if raw in known:
-        return known[raw]
-    if not raw.endswith("USDT") and not raw.endswith("USD") and not raw.endswith("BUSD"):
-        return f"{raw}USDT"
-    return raw
+KNOWN_NAMES = {
+    "BITCOIN": ("BTCUSDT", "crypto", "BINANCE"),
+    "ETHEREUM": ("ETHUSDT", "crypto", "BINANCE"),
+    "SOLANA": ("SOLUSDT", "crypto", "BINANCE"),
+    "TESLA": ("TSLA", "america", "NASDAQ"),
+    "NVIDIA": ("NVDA", "america", "NASDAQ"),
+    "APPLE": ("AAPL", "america", "NASDAQ"),
+    "MICROSOFT": ("MSFT", "america", "NASDAQ"),
+    "AMAZON": ("AMZN", "america", "NASDAQ"),
+    "GOOGLE": ("GOOGL", "america", "NASDAQ"),
+}
 
 def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None:
     if not HAS_TV_TA:
         return None
 
-    sym = clean_crypto_symbol(raw_symbol)
+    sym = raw_symbol.upper().strip().replace("/", "").replace("-", "").replace("PERP", "")
     tv_intervals = {
         "1m": Interval.INTERVAL_1_MINUTE,
         "5m": Interval.INTERVAL_5_MINUTES,
@@ -121,33 +117,70 @@ def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None
     }
     interval = tv_intervals.get(interval_key.lower(), Interval.INTERVAL_1_HOUR)
 
-    for ex in ["BINANCE", "BYBIT", "OKX", "COINBASE"]:
+    candidates = []
+    if sym in KNOWN_NAMES:
+        candidates.append(KNOWN_NAMES[sym])
+
+    if len(sym) == 6 and any(fx in sym for fx in ["MYR", "EUR", "GBP", "JPY", "AUD", "SGD"]):
+        candidates.append((sym, "forex", "FX_IDC"))
+        candidates.append((sym, "forex", "OANDA"))
+
+    crypto_sym = sym if (sym.endswith("USDT") or sym.endswith("USD") or sym.endswith("BUSD")) else f"{sym}USDT"
+    candidates.append((crypto_sym, "crypto", "BINANCE"))
+    candidates.append((crypto_sym, "crypto", "BYBIT"))
+    candidates.append((crypto_sym, "crypto", "OKX"))
+    candidates.append((sym, "america", "NASDAQ"))
+    candidates.append((sym, "america", "NYSE"))
+    candidates.append((sym, "malaysia", "MYX"))
+
+    for symbol_candidate, screener, exchange in candidates:
         try:
             handler = TA_Handler(
-                symbol=sym,
-                screener="crypto",
-                exchange=ex,
+                symbol=symbol_candidate,
+                screener=screener,
+                exchange=exchange,
                 interval=interval,
             )
             analysis = handler.get_analysis()
             inds = analysis.indicators
             summary = analysis.summary
+            price = inds.get("close")
 
-            return {
-                "symbol": sym,
-                "exchange": ex,
-                "interval": interval_key,
-                "price": inds.get("close"),
-                "recommendation": summary.get("RECOMMENDATION", "NEUTRAL"),
-                "buy": summary.get("BUY", 0),
-                "sell": summary.get("SELL", 0),
-                "neutral": summary.get("NEUTRAL", 0),
-                "rsi": round(inds.get("RSI", 0) or 0, 2),
-                "macd": round(inds.get("MACD.macd", 0) or 0, 2),
-                "ema20": round(inds.get("EMA20", 0) or 0, 2),
-                "ema50": round(inds.get("EMA50", 0) or 0, 2),
-                "ema200": round(inds.get("EMA200", 0) or 0, 2),
-            }
+            if price is not None:
+                if screener == "crypto":
+                    market_type = "Kripto"
+                    curr = "$"
+                elif screener == "malaysia":
+                    market_type = "Bursa Malaysia"
+                    curr = "RM"
+                elif screener == "america":
+                    market_type = f"Saham US ({exchange})"
+                    curr = "$"
+                else:
+                    market_type = "Forex"
+                    curr = ""
+
+                price_val = round(price, 4) if price < 1 else round(price, 2)
+                chart_url = f"https://www.tradingview.com/chart/?symbol={exchange}:{symbol_candidate}"
+
+                return {
+                    "symbol": symbol_candidate,
+                    "market": market_type,
+                    "exchange": exchange,
+                    "interval": interval_key,
+                    "currency": curr,
+                    "price": price_val,
+                    "recommendation": summary.get("RECOMMENDATION", "NEUTRAL"),
+                    "buy": summary.get("BUY", 0),
+                    "sell": summary.get("SELL", 0),
+                    "neutral": summary.get("NEUTRAL", 0),
+                    "rsi": round(inds.get("RSI", 0) or 0, 2),
+                    "macd": round(inds.get("MACD.macd", 0) or 0, 2),
+                    "ema20": round(inds.get("EMA20", 0) or 0, 2),
+                    "ema50": round(inds.get("EMA50", 0) or 0, 2),
+                    "ema200": round(inds.get("EMA200", 0) or 0, 2),
+                    "chart_url": chart_url,
+                }
         except Exception:
             continue
     return None

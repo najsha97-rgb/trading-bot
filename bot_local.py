@@ -1,6 +1,11 @@
 """
-Telegram AI Bot — Local Polling Runner + TradingView Live Data
-Format kemas, bersih, tiada simbol bintang (*) yang berselerak, menggunakan ikon/emoji yang mudah dibaca.
+Telegram AI Bot — Local Polling Runner + Multi-Market TradingView Engine
+Menyokong:
+1. Semua Crypto (BTC, ETH, SOL, XRP, dll)
+2. Saham Bursa Malaysia (MAYBANK, TENAGA, CIMB, YTL, GAMUDA, dll)
+3. Saham Global & US / NASDAQ / NYSE (NVDA, TSLA, AAPL, MSFT, dll)
+4. Pasaran Forex & Komoditi (USDMYR, EURUSD, GBPUSD, dll)
+Format kemas, bersih, tiada simbol bintang (*) yang berselerak.
 """
 
 import asyncio
@@ -47,7 +52,7 @@ GEMINI_MODELS = [
     "gemini-3.8-flash",
 ]
 
-SYSTEM_PROMPT = """Anda adalah pembantu analisis pasaran crypto dan trading profesional.
+SYSTEM_PROMPT = """Anda adalah pembantu analisis pasaran kewangan profesional (Crypto, Bursa Malaysia, NASDAQ/US Stocks, & Forex).
 ARAHAN FORMAT PENTING:
 1. DILARANG KERAS menggunakan simbol bintang (*) atau (**). JANGAN gunakan markdown asterisk.
 2. Gunakan ikon dan emoji yang kemas (seperti 🔹, 📈, 📉, 🎯, 💡, 🛡️, 💰) untuk senarai dan poin utama.
@@ -77,30 +82,17 @@ def format_clean_telegram(text: str) -> str:
     """Membersihkan sebarang simbol bintang (*) dan formatkan dengan kemas untuk Telegram."""
     if not text:
         return ""
-
-    # Tukar header markdown (### Header) kepada bold dengan ikon
     text = re.sub(r'^#{1,6}\s*(.+)$', r'📌 <b>\1</b>', text, flags=re.MULTILINE)
-
-    # Tukar **bold** kepada <b>bold</b>
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
-
-    # Tukar *italic* atau _italic_ kepada <i>italic</i>
     text = re.sub(r'(?<!\w)\*([^\*\n]+?)\*(?!\w)', r'<i>\1</i>', text)
     text = re.sub(r'(?<!\w)_([^_\n]+?)_(?!\w)', r'<i>\1</i>', text)
-
-    # Tukar bullet point (* atau -) kepada ikon 🔹
     text = re.sub(r'^\s*[\*\-•]\s+', '🔹 ', text, flags=re.MULTILINE)
-
-    # Padam sebarang baki simbol bintang (*)
     text = text.replace('*', '')
-
-    # Kurangkan jarak baris berlebihan
     text = re.sub(r'\n{3,}', '\n\n', text)
-
     return text.strip()
 
 
-# ── TradingView TA Helper ──────────────────────────────────────────────────────
+# ── Multi-Market TradingView TA Helper ─────────────────────────────────────────
 
 INTERVAL_MAP = {
     "1m": Interval.INTERVAL_1_MINUTE,
@@ -112,53 +104,101 @@ INTERVAL_MAP = {
     "1w": Interval.INTERVAL_1_WEEK,
 }
 
-def clean_crypto_symbol(raw: str) -> str:
-    raw = raw.upper().strip().replace("/", "").replace("-", "").replace("PERP", "")
-    known = {
-        "BITCOIN": "BTCUSDT",
-        "ETHEREUM": "ETHUSDT",
-        "SOLANA": "SOLUSDT",
-        "RIPPLE": "XRPUSDT",
-        "DOGECOIN": "DOGEUSDT",
-        "CARDANO": "ADAUSDT",
-    }
-    if raw in known:
-        return known[raw]
-    if not raw.endswith("USDT") and not raw.endswith("USD") and not raw.endswith("BUSD"):
-        return f"{raw}USDT"
-    return raw
+KNOWN_NAMES = {
+    "BITCOIN": ("BTCUSDT", "crypto", "BINANCE"),
+    "ETHEREUM": ("ETHUSDT", "crypto", "BINANCE"),
+    "SOLANA": ("SOLUSDT", "crypto", "BINANCE"),
+    "TESLA": ("TSLA", "america", "NASDAQ"),
+    "NVIDIA": ("NVDA", "america", "NASDAQ"),
+    "APPLE": ("AAPL", "america", "NASDAQ"),
+    "MICROSOFT": ("MSFT", "america", "NASDAQ"),
+    "AMAZON": ("AMZN", "america", "NASDAQ"),
+    "GOOGLE": ("GOOGL", "america", "NASDAQ"),
+}
 
 def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None:
-    sym = clean_crypto_symbol(raw_symbol)
+    """
+    Auto-resolves and fetches live indicators from TradingView for:
+    - Crypto (Binance / Bybit)
+    - Bursa Malaysia (MYX)
+    - US Stocks / Global (NASDAQ / NYSE)
+    - Forex (FX_IDC / Oanda)
+    """
+    sym = raw_symbol.upper().strip().replace("/", "").replace("-", "").replace("PERP", "")
     interval = INTERVAL_MAP.get(interval_key.lower(), Interval.INTERVAL_1_HOUR)
 
-    for ex in ["BINANCE", "BYBIT", "OKX", "COINBASE"]:
+    candidates = []
+
+    # Check known names first
+    if sym in KNOWN_NAMES:
+        candidates.append(KNOWN_NAMES[sym])
+
+    # 1. Forex candidates
+    if len(sym) == 6 and any(fx in sym for fx in ["MYR", "EUR", "GBP", "JPY", "AUD", "SGD", "CAD", "CHF"]):
+        candidates.append((sym, "forex", "FX_IDC"))
+        candidates.append((sym, "forex", "OANDA"))
+
+    # 2. Crypto candidates
+    crypto_sym = sym if (sym.endswith("USDT") or sym.endswith("USD") or sym.endswith("BUSD")) else f"{sym}USDT"
+    candidates.append((crypto_sym, "crypto", "BINANCE"))
+    candidates.append((crypto_sym, "crypto", "BYBIT"))
+    candidates.append((crypto_sym, "crypto", "OKX"))
+
+    # 3. US Stocks (NASDAQ & NYSE)
+    candidates.append((sym, "america", "NASDAQ"))
+    candidates.append((sym, "america", "NYSE"))
+
+    # 4. Bursa Malaysia (MYX)
+    candidates.append((sym, "malaysia", "MYX"))
+
+    for symbol_candidate, screener, exchange in candidates:
         try:
             handler = TA_Handler(
-                symbol=sym,
-                screener="crypto",
-                exchange=ex,
+                symbol=symbol_candidate,
+                screener=screener,
+                exchange=exchange,
                 interval=interval,
             )
             analysis = handler.get_analysis()
             inds = analysis.indicators
             summary = analysis.summary
+            price = inds.get("close")
 
-            return {
-                "symbol": sym,
-                "exchange": ex,
-                "interval": interval_key,
-                "price": inds.get("close"),
-                "recommendation": summary.get("RECOMMENDATION", "NEUTRAL"),
-                "buy": summary.get("BUY", 0),
-                "sell": summary.get("SELL", 0),
-                "neutral": summary.get("NEUTRAL", 0),
-                "rsi": round(inds.get("RSI", 0) or 0, 2),
-                "macd": round(inds.get("MACD.macd", 0) or 0, 2),
-                "ema20": round(inds.get("EMA20", 0) or 0, 2),
-                "ema50": round(inds.get("EMA50", 0) or 0, 2),
-                "ema200": round(inds.get("EMA200", 0) or 0, 2),
-            }
+            if price is not None:
+                if screener == "crypto":
+                    market_type = "Kripto"
+                    currency_prefix = "$"
+                elif screener == "malaysia":
+                    market_type = "Bursa Malaysia"
+                    currency_prefix = "RM"
+                elif screener == "america":
+                    market_type = f"Saham US ({exchange})"
+                    currency_prefix = "$"
+                else:
+                    market_type = "Forex / Mata Wang"
+                    currency_prefix = ""
+
+                price_val = round(price, 4) if price < 1 else (round(price, 2) if price < 1000 else round(price, 2))
+                chart_url = f"https://www.tradingview.com/chart/?symbol={exchange}:{symbol_candidate}"
+
+                return {
+                    "symbol": symbol_candidate,
+                    "market": market_type,
+                    "exchange": exchange,
+                    "interval": interval_key,
+                    "currency": currency_prefix,
+                    "price": price_val,
+                    "recommendation": summary.get("RECOMMENDATION", "NEUTRAL"),
+                    "buy": summary.get("BUY", 0),
+                    "sell": summary.get("SELL", 0),
+                    "neutral": summary.get("NEUTRAL", 0),
+                    "rsi": round(inds.get("RSI", 0) or 0, 2),
+                    "macd": round(inds.get("MACD.macd", 0) or 0, 2),
+                    "ema20": round(inds.get("EMA20", 0) or 0, 2),
+                    "ema50": round(inds.get("EMA50", 0) or 0, 2),
+                    "ema200": round(inds.get("EMA200", 0) or 0, 2),
+                    "chart_url": chart_url,
+                }
         except Exception:
             continue
     return None
@@ -173,7 +213,7 @@ async def send_message(client: httpx.AsyncClient, chat_id: int | str, text: str)
             "chat_id": chat_id,
             "text": text,
             "parse_mode": "HTML",
-            "disable_web_page_preview": True,
+            "disable_web_page_preview": False,
         }, timeout=10.0)
     except Exception as e:
         logger.error("Gagal hantar mesej: %s", e)
@@ -245,9 +285,11 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
     if not ta:
         await send_message(client, chat_id,
             f"❌ <b>Simbol tidak ditemui di TradingView:</b> <code>{symbol}</code>\n\n"
-            "Contoh arahan yang betul:\n"
-            "🔹 <code>/status BTC</code>\n"
-            "🔹 <code>/status SOL 4h</code>"
+            "<b>Contoh Carian Pelbagai Pasaran:</b>\n"
+            "🔹 Kripto: <code>/status BTC</code> atau <code>/status SOL 4h</code>\n"
+            "🔹 Bursa Malaysia: <code>/status MAYBANK</code> atau <code>/status CIMB</code>\n"
+            "🔹 Saham Global/NASDAQ: <code>/status NVDA</code> atau <code>/status TSLA 1d</code>\n"
+            "🔹 Forex: <code>/status USDMYR</code> atau <code>/status EURUSD</code>"
         )
         return
 
@@ -263,7 +305,8 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
     else:
         badge = "⚪ <b>NEUTRAL</b>"
 
-    price_str = f"${ta['price']:,.2f}" if isinstance(ta['price'], (int, float)) else str(ta['price'])
+    curr = ta["currency"]
+    price_str = f"{curr}{ta['price']:,.2f}" if curr else f"{ta['price']:,.4f}"
     rsi_str = f"{ta['rsi']}"
     if ta['rsi'] >= 70:
         rsi_str += " ⚠️ Overbought"
@@ -271,19 +314,20 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
         rsi_str += " 💡 Oversold"
 
     ta_context = (
-        f"Pair: {ta['symbol']} ({ta['exchange']}), Timeframe: {ta['interval']}\n"
+        f"Aset: {ta['symbol']} ({ta['market']} - {ta['exchange']}), Timeframe: {ta['interval']}\n"
         f"Harga: {price_str}, Rating: {rec} (Buy: {ta['buy']}, Sell: {ta['sell']}, Neutral: {ta['neutral']})\n"
-        f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {ta['ema20']}, EMA50: {ta['ema50']}, EMA200: {ta['ema200']}"
+        f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {curr}{ta['ema20']}, EMA50: {curr}{ta['ema50']}, EMA200: {curr}{ta['ema200']}"
     )
 
     ai_comment = await ask_gemini(
         chat_id,
-        f"Ulas data TradingView ini untuk {ta['symbol']}. Berikan sokongan, rintangan, dan kawalan risiko dalam 3-4 baris.",
+        f"Ulas data pasaran {ta['market']} ini untuk {ta['symbol']}. Berikan sokongan, rintangan, dan kawalan risiko dalam 3-4 baris.",
         context=ta_context
     )
 
     msg = (
         f"📊 <b>ANALISIS PASARAN: {ta['symbol']}</b>\n"
+        f"🏛 Pasaran: <b>{ta['market']}</b> ({ta['exchange']})\n"
         f"⏱ Timeframe: <code>{ta['interval']}</code>\n"
         f"────────────────────────\n"
         f"💰 <b>Harga Semasa:</b> <code>{price_str}</code>\n"
@@ -292,11 +336,12 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
         f"📋 <b>Indikator Utama:</b>\n"
         f"🔹 <b>RSI (14):</b> <code>{rsi_str}</code>\n"
         f"🔹 <b>MACD:</b> <code>{ta['macd']}</code>\n"
-        f"🔹 <b>EMA 20:</b> <code>${ta['ema20']:,.2f}</code>\n"
-        f"🔹 <b>EMA 50:</b> <code>${ta['ema50']:,.2f}</code>\n"
-        f"🔹 <b>EMA 200:</b> <code>${ta['ema200']:,.2f}</code>\n\n"
+        f"🔹 <b>EMA 20:</b> <code>{curr}{ta['ema20']:,.2f}</code>\n"
+        f"🔹 <b>EMA 50:</b> <code>{curr}{ta['ema50']:,.2f}</code>\n"
+        f"🔹 <b>EMA 200:</b> <code>{curr}{ta['ema200']:,.2f}</code>\n\n"
         f"💡 <b>Ulasan AI:</b>\n"
-        f"{ai_comment}"
+        f"{ai_comment}\n\n"
+        f"🌐 <a href=\"{ta['chart_url']}\">Buka Carta di TradingView</a>"
     )
 
     await send_message(client, chat_id, msg)
@@ -354,15 +399,19 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
     if command == "/start":
         await send_message(client, chat_id,
             "👋 <b>Selamat Datang ke AI Trading Assistant!</b>\n"
-            "Disambungkan terus ke data langsung TradingView.\n"
+            "Disambungkan ke TradingView untuk Kripto, Saham Bursa Malaysia & NASDAQ.\n"
             "────────────────────────\n\n"
-            "📌 <b>Arahan Pantas:</b>\n"
-            "🔹 <code>/status BTC</code> — Semak status teknikal semasa\n"
-            "🔹 <code>/status SOL 4h</code> — Semak status timeframe 4 jam\n"
-            "🔹 <code>/indicator</code> — Panduan masukkan indikator TradingView\n"
-            "🔹 <code>/strategy</code> — Panduan setup alert strategi ke Telegram\n"
+            "📌 <b>Contoh Carian Pelbagai Pasaran:</b>\n"
+            "🔹 <code>/status BTC</code> — Kripto Bitcoin\n"
+            "🔹 <code>/status MAYBANK</code> — Saham Bursa Malaysia\n"
+            "🔹 <code>/status NVDA 1d</code> — Saham NASDAQ (Nvidia)\n"
+            "🔹 <code>/status USDMYR</code> — Kadar Tukaran Forex\n\n"
+            "🛠 <b>Panduan:</b>\n"
+            "🔹 <code>/indicator</code> — Panduan masukkan indikator\n"
+            "🔹 <code>/strategy</code> — Panduan setup alert webhook\n"
             "🔹 <code>/clear</code> — Kosongkan ingatan perbualan\n\n"
-            "💬 Anda juga boleh bertanya soalan pasaran terus dalam perbualan ini!"
+            "💬 Anda juga boleh menaip soalan biasa seperti:\n"
+            "<i>'Bagaimana status Maybank?'</i> atau <i>'Trend Tesla hari ini'</i>"
         )
     elif command in ["/status", "/ta", "/analisa"]:
         await handle_status_command(client, chat_id, args)
@@ -374,7 +423,7 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
         await send_message(client, chat_id,
             "🤖 <b>Senarai Arahan Tersedia:</b>\n"
             "────────────────────────\n"
-            "🔹 <code>/status &lt;crypto&gt; [tf]</code> — Analisis teknikal live TradingView\n"
+            "🔹 <code>/status &lt;simbol&gt; [tf]</code> — Analisis teknikal live (Kripto, Bursa, US, Forex)\n"
             "🔹 <code>/indicator</code> — Panduan indikator TradingView\n"
             "🔹 <code>/strategy</code> — Panduan alert strategi webhook\n"
             "🔹 <code>/clear</code> — Kosongkan ingatan perbualan\n"
@@ -384,7 +433,7 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
         conversations.pop(chat_id, None)
         await send_message(client, chat_id, "🧹 Ingatan perbualan telah dikosongkan.")
     elif command == "/ping":
-        await send_message(client, chat_id, "🏓 Pong! Bot aktif dengan sambungan TradingView.")
+        await send_message(client, chat_id, "🏓 Pong! Bot aktif dengan sambungan TradingView pelbagai pasaran.")
     else:
         await send_message(client, chat_id, f"❓ Arahan tidak dikenali: {command}\nTaip /help untuk senarai arahan.")
 
@@ -396,7 +445,7 @@ async def main():
         print("Ralat: TELEGRAM_BOT_TOKEN tiada dalam fail .env!")
         return
 
-    print("Memulakan Telegram AI Bot (Format Kemas & Bersih)...")
+    print("Memulakan Telegram AI Bot (Multi-Market: Kripto, Bursa, NASDAQ, Forex)...")
     print("Bot sedang mendengar mesej dari Telegram...")
 
     async with httpx.AsyncClient(timeout=35.0) as client:
@@ -435,18 +484,21 @@ async def main():
                         args = parts[1:]
                         await handle_command(client, chat_id, cmd, args)
                     else:
-                        match = re.search(r'\b(btc|eth|sol|xrp|doge|ada|bnb|avax|link|near|sui|pepe|bitcoin|ethereum|solana)\b', text, re.IGNORECASE)
+                        # Extract ticker if user asks in natural language
                         context = ""
-                        if match and any(k in text.lower() for k in ["status", "harga", "price", "analis", "analisis", "signal", "trend", "tengok"]):
-                            detected_coin = match.group(1)
-                            ta = get_tradingview_ta(detected_coin, "1h")
-                            if ta:
-                                context = (
-                                    f"TradingView Technical Data for {ta['symbol']}:\n"
-                                    f"Harga: ${ta['price']}, Isyarat: {ta['recommendation']} "
-                                    f"(Buy:{ta['buy']}, Sell:{ta['sell']}, Neutral:{ta['neutral']}), "
-                                    f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {ta['ema20']}, EMA50: {ta['ema50']}, EMA200: {ta['ema200']}"
-                                )
+                        # Try to find ticker in text
+                        words = re.findall(r'[A-Za-z0-9]+', text)
+                        for word in words:
+                            if len(word) >= 2 and word.upper() not in ["APA", "BILA", "CARA", "BOLEH", "STATUS", "HARGA", "PRICE", "TREND", "DAN", "SAYA", "KAU", "INI", "ITU", "HARI"]:
+                                ta = get_tradingview_ta(word, "1h")
+                                if ta:
+                                    context = (
+                                        f"TradingView Technical Data for {ta['symbol']} ({ta['market']} - {ta['exchange']}):\n"
+                                        f"Harga: {ta['currency']}{ta['price']}, Isyarat: {ta['recommendation']} "
+                                        f"(Buy:{ta['buy']}, Sell:{ta['sell']}, Neutral:{ta['neutral']}), "
+                                        f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {ta['ema20']}, EMA50: {ta['ema50']}."
+                                    )
+                                    break
 
                         reply = await ask_gemini(chat_id, text, context=context)
                         await send_message(client, chat_id, reply)
