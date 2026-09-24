@@ -3,3 +3,6 @@ uvicorn[standard]
 httpx
 google-genai
 python-dotenv
+requests
+flask
+tradingview-ta
