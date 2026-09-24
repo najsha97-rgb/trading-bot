@@ -226,9 +226,22 @@ async def send_typing(client: httpx.AsyncClient, chat_id: int | str) -> None:
         pass
 
 
+DISCLAIMER_HTML = (
+    "⚠️ <i>Penafian: Maklumat dan analisis ini adalah untuk tujuan pembelajaran dan rujukan teknikal sahaja, "
+    "bukan nasihat pelaburan atau kewangan. Sentiasa lakukan kajian anda sendiri (DYOR).</i>"
+)
+
+def attach_disclaimer(text: str) -> str:
+    """Sertakan penafian bukan nasihat kewangan jika belum wujud."""
+    lower = text.lower()
+    if any(k in lower for k in ["bukan nasihat kewangan", "penafian:", "dyor", "not financial advice"]):
+        return text
+    return f"{text.rstrip()}\n\n{DISCLAIMER_HTML}"
+
+
 # ── Gemini AI Helper ───────────────────────────────────────────────────────────
 
-async def ask_gemini(chat_id: str, user_message: str, context: str = "") -> str:
+async def ask_gemini(chat_id: str, user_message: str, context: str = "", add_disclaimer: bool = True) -> str:
     if not gemini:
         return "⚠️ GEMINI_API_KEY belum dikonfigurasi dalam fail .env."
 
@@ -263,6 +276,8 @@ async def ask_gemini(chat_id: str, user_message: str, context: str = "") -> str:
             if len(history) > 40:
                 conversations[chat_id] = history[-40:]
             logger.info("✅ Respon berjaya via %s", model)
+            if add_disclaimer:
+                clean_reply = attach_disclaimer(clean_reply)
             return clean_reply
         except Exception as e:
             logger.warning("Model %s ralat: %s", model, str(e)[:80])
@@ -322,7 +337,8 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
     ai_comment = await ask_gemini(
         chat_id,
         f"Ulas data pasaran {ta['market']} ini untuk {ta['symbol']}. Berikan sokongan, rintangan, dan kawalan risiko dalam 3-4 baris.",
-        context=ta_context
+        context=ta_context,
+        add_disclaimer=False,
     )
 
     msg = (
@@ -341,7 +357,8 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
         f"🔹 <b>EMA 200:</b> <code>{curr}{ta['ema200']:,.2f}</code>\n\n"
         f"💡 <b>Ulasan AI:</b>\n"
         f"{ai_comment}\n\n"
-        f"🌐 <a href=\"{ta['chart_url']}\">Buka Carta di TradingView</a>"
+        f"🌐 <a href=\"{ta['chart_url']}\">Buka Carta di TradingView</a>\n\n"
+        f"{DISCLAIMER_HTML}"
     )
 
     await send_message(client, chat_id, msg)
@@ -367,7 +384,8 @@ def get_indicator_guide() -> str:
         "▫️ Strategi: EMA 20 silang ke atas EMA 50 menandakan permulaan trend kenaikan.\n\n"
         "🔹 <b>MACD (Moving Average Convergence Divergence)</b>\n"
         "▫️ Mengesan momentum pasaran dan titik perubahan arah harga.\n\n"
-        "👉 Taip <code>/strategy</code> untuk melihat cara memasang alert webhook ke Telegram!"
+        "👉 Taip <code>/strategy</code> untuk melihat cara memasang alert webhook ke Telegram!\n\n"
+        f"{DISCLAIMER_HTML}"
     )
 
 def get_strategy_guide() -> str:
@@ -389,7 +407,8 @@ def get_strategy_guide() -> str:
         '  "message": "Isyarat masuk dari strategi!"\n'
         "}</code>\n\n"
         "4️⃣ <b>Simpan Alert</b>\n"
-        "Klik butang <b>Create</b>. Bot akan menghantar notifikasi kemas ke Telegram setiap kali alert berbunyi."
+        "Klik butang <b>Create</b>. Bot akan menghantar notifikasi kemas ke Telegram setiap kali alert berbunyi.\n\n"
+        f"{DISCLAIMER_HTML}"
     )
 
 

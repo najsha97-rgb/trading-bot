@@ -53,6 +53,21 @@ def format_clean_telegram(text: str) -> str:
     return text.strip()
 
 
+DISCLAIMER_HTML = (
+    "⚠️ <i>Penafian: Maklumat dan analisis ini adalah untuk tujuan pembelajaran dan rujukan teknikal sahaja, "
+    "bukan nasihat pelaburan atau kewangan. Sentiasa lakukan kajian anda sendiri (DYOR).</i>"
+)
+
+def attach_disclaimer(text: str) -> str:
+    """Sertakan penafian bukan nasihat kewangan jika belum wujud."""
+    if not text:
+        return ""
+    lower = text.lower()
+    if any(k in lower for k in ["bukan nasihat kewangan", "penafian:", "dyor", "not financial advice"]):
+        return text
+    return f"{text.rstrip()}\n\n{DISCLAIMER_HTML}"
+
+
 # ── Telegram Helper ───────────────────────────────────────────────────────────
 
 def send_telegram(text: str, chat_id: str = None) -> bool:
@@ -279,6 +294,7 @@ def tradingview_alert():
         ai_analysis = call_gemini(ai_prompt)
         if ai_analysis:
             lines.append(f"\n💡 <b>Ulasan AI:</b>\n{ai_analysis}")
+        lines.append(f"\n{DISCLAIMER_HTML}")
 
         formatted_msg = "\n".join(lines)
         send_telegram(formatted_msg)
@@ -325,7 +341,8 @@ def telegram_webhook():
                 "🔹 <i>'panduan indikator'</i> — Cara pasang RSI & EMA\n"
                 "🔹 <i>'setup alert'</i> — Cara sambung webhook TradingView\n\n"
                 "🤖 Boleh juga gunakan arahan biasa:\n"
-                "🔹 <code>/status BTC</code> | <code>/indicator</code> | <code>/strategy</code>",
+                f"🔹 <code>/status BTC</code> | <code>/indicator</code> | <code>/strategy</code>\n\n"
+                f"{DISCLAIMER_HTML}",
                 chat_id=chat_id,
             )
             return "OK", 200
@@ -338,7 +355,8 @@ def telegram_webhook():
                 "🔹 <b>Carian Ticker Pantas:</b> Taip <code>btc</code>, <code>maybank</code>, <code>nvda</code>, atau <code>sol 4h</code>\n"
                 "🔹 <b>Panduan Indikator:</b> Taip <i>'indikator'</i> atau <code>/indicator</code>\n"
                 "🔹 <b>Setup Alert:</b> Taip <i>'alert'</i>, <i>'strategi'</i> atau <code>/strategy</code>\n"
-                "🔹 <b>Tanya Soalan Terbuka:</b> Taip apa sahaja seperti <i>'adakah bagus beli btc sekarang?'</i>",
+                "🔹 <b>Tanya Soalan Terbuka:</b> Taip apa sahaja seperti <i>'adakah bagus beli btc sekarang?'</i>\n\n"
+                f"{DISCLAIMER_HTML}",
                 chat_id=chat_id,
             )
             return "OK", 200
@@ -364,7 +382,8 @@ def telegram_webhook():
                 "▫️ Strategi: EMA 20 silang ke atas EMA 50 menandakan permulaan trend kenaikan.\n\n"
                 "🔹 <b>MACD (Moving Average Convergence Divergence)</b>\n"
                 "▫️ Mengesan momentum pasaran dan titik perubahan arah harga.\n\n"
-                "👉 Taip <i>'strategi'</i> untuk melihat cara memasang alert webhook ke Telegram!"
+                "👉 Taip <i>'strategi'</i> untuk melihat cara memasang alert webhook ke Telegram!\n\n"
+                f"{DISCLAIMER_HTML}"
             )
             send_telegram(guide, chat_id=chat_id)
             return "OK", 200
@@ -390,7 +409,8 @@ def telegram_webhook():
                 '  "message": "Isyarat masuk dari strategi!"\n'
                 "}</code>\n\n"
                 "4️⃣ <b>Simpan Alert</b>\n"
-                "Klik butang <b>Create</b>. Bot akan menghantar notifikasi kemas ke Telegram setiap kali alert berbunyi."
+                "Klik butang <b>Create</b>. Bot akan menghantar notifikasi kemas ke Telegram setiap kali alert berbunyi.\n\n"
+                f"{DISCLAIMER_HTML}"
             )
             send_telegram(guide, chat_id=chat_id)
             return "OK", 200
@@ -439,7 +459,8 @@ def telegram_webhook():
                 f"🔹 <b>EMA 50:</b> <code>{curr}{ta_data['ema50']:,.2f}</code>\n"
                 f"🔹 <b>EMA 200:</b> <code>{curr}{ta_data['ema200']:,.2f}</code>\n\n"
                 f"💡 <b>Ulasan AI:</b>\n{ai_text}\n\n"
-                f"🌐 <a href=\"{ta_data['chart_url']}\">Buka Carta di TradingView</a>"
+                f"🌐 <a href=\"{ta_data['chart_url']}\">Buka Carta di TradingView</a>\n\n"
+                f"{DISCLAIMER_HTML}"
             )
             send_telegram(msg, chat_id=chat_id)
 
@@ -517,7 +538,8 @@ def telegram_webhook():
 
             prompt = f"Data Pasaran:\n{context_ta}\n\nSoalan: {text}" if context_ta else text
             ai_reply = call_gemini(prompt)
-            send_telegram(ai_reply or "Maaf, tiada respon dijana.", chat_id=chat_id)
+            final_reply = attach_disclaimer(ai_reply) if ai_reply else "Maaf, tiada respon dijana."
+            send_telegram(final_reply, chat_id=chat_id)
 
         return "OK", 200
     except Exception as e:
