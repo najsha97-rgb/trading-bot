@@ -314,9 +314,153 @@ KNOWN_NAMES = {
     "GOOGLE": ("GOOGL", "america", "NASDAQ"),
 }
 
+def get_fallback_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None:
+    """
+    Kiraan teknikal sokongan (Fallback TA) terus dari candle Binance / Yahoo Finance
+    apabila TradingView API mengalami masalah rate-limit (429) atau disekat.
+    """
+    try:
+        sym = raw_symbol.upper().strip().replace("/", "").replace("-", "").replace("PERP", "")
+        df = None
+        market_type = "Kripto"
+        exchange = "BINANCE"
+        curr = "$"
+
+        # 1. Bursa Malaysia
+        if sym in BURSA_CODE_MAP or (len(sym) == 4 and sym.isdigit()):
+            b_sym = BURSA_CODE_MAP.get(sym, f"{sym}.KL")
+            yf_df = yf.Ticker(b_sym).history(period="2mo", interval="1d")
+            if not yf_df.empty:
+                df = yf_df.reset_index()
+                df.columns = [c.lower() for c in df.columns]
+                market_type = "Bursa Malaysia"
+                exchange = "MYX"
+                curr = "RM"
+
+        # 2. Crypto via Binance Public API
+        if df is None or df.empty:
+            c_sym = sym if (sym.endswith("USDT") or sym.endswith("USD") or sym.endswith("BUSD")) else f"{sym}USDT"
+            binance_tf = interval_key.lower() if interval_key.lower() in ["1m", "5m", "15m", "1h", "4h", "1d", "1w"] else "1h"
+            try:
+                r = requests.get(
+                    f"https://api.binance.com/api/v3/klines?symbol={c_sym}&interval={binance_tf}&limit=60",
+                    timeout=5.0
+                )
+                if r.status_code == 200:
+                    raw = r.json()
+                    df = pd.DataFrame(raw, columns=[
+                        "timestamp", "open", "high", "low", "close", "volume",
+                        "close_time", "qav", "num_trades", "taker_base_vol", "taker_quote_vol", "ignore"
+                    ])
+                    for col in ["open", "high", "low", "close", "volume"]:
+                        df[col] = df[col].astype(float)
+                    sym = c_sym
+                    market_type = "Kripto"
+                    exchange = "BINANCE"
+                    curr = "$"
+            except Exception:
+                pass
+
+        # 3. US Stocks / Forex via yfinance
+        if df is None or df.empty:
+            is_forex = len(sym) == 6 and any(fx in sym for fx in ["MYR", "EUR", "GBP", "USD", "JPY", "SGD"])
+            yf_sym = f"{sym}=X" if is_forex else sym
+            yf_tf = "1d" if interval_key.lower() in ["1d", "1w"] else "1h"
+            yf_df = yf.Ticker(yf_sym).history(period="2mo", interval=yf_tf)
+            if not yf_df.empty:
+                df = yf_df.reset_index()
+                df.columns = [c.lower() for c in df.columns]
+                market_type = "Forex" if is_forex else "Saham US"
+                exchange = "OANDA" if is_forex else "NASDAQ"
+                curr = "" if is_forex else "$"
+
+        if df is None or df.empty or len(df) < 5:
+            return None
+
+        close = df["close"].astype(float)
+        price = close.iloc[-1]
+        price_val = round(price, 4) if price < 1 else round(price, 2)
+
+        # Hitung RSI (14)
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / (loss + 1e-9)
+        rsi_series = 100 - (100 / (1 + rs))
+        rsi = round(float(rsi_series.iloc[-1]), 2) if not rsi_series.empty and not pd.isna(rsi_series.iloc[-1]) else 50.0
+
+        # Hitung EMAs
+        ema20 = round(float(close.ewm(span=20).mean().iloc[-1]), 2)
+        ema50 = round(float(close.ewm(span=50).mean().iloc[-1]), 2)
+        ema200 = round(float(close.ewm(span=200).mean().iloc[-1]), 2) if len(close) >= 200 else ema50
+
+        # MACD
+        ema12 = close.ewm(span=12).mean()
+        ema26 = close.ewm(span=26).mean()
+        macd_line = ema12 - ema26
+        macd_val = round(float(macd_line.iloc[-1]), 2)
+
+        # Scoring
+        buy_score = 0
+        sell_score = 0
+        neutral_score = 0
+
+        if rsi < 35:
+            buy_score += 1
+        elif rsi > 65:
+            sell_score += 1
+        else:
+            neutral_score += 1
+
+        if price > ema20:
+            buy_score += 1
+        else:
+            sell_score += 1
+
+        if ema20 > ema50:
+            buy_score += 1
+        else:
+            sell_score += 1
+
+        if macd_val > 0:
+            buy_score += 1
+        else:
+            sell_score += 1
+
+        if buy_score >= 3:
+            rec = "STRONG_BUY" if buy_score == 4 else "BUY"
+        elif sell_score >= 3:
+            rec = "STRONG_SELL" if sell_score == 4 else "SELL"
+        else:
+            rec = "NEUTRAL"
+
+        chart_url = f"https://www.tradingview.com/chart/?symbol={exchange}:{sym}"
+
+        return {
+            "symbol": sym,
+            "market": market_type,
+            "exchange": exchange,
+            "interval": interval_key,
+            "currency": curr,
+            "price": price_val,
+            "recommendation": rec,
+            "buy": buy_score,
+            "sell": sell_score,
+            "neutral": neutral_score,
+            "rsi": rsi,
+            "macd": macd_val,
+            "ema20": ema20,
+            "ema50": ema50,
+            "ema200": ema200,
+            "chart_url": chart_url,
+        }
+    except Exception as e:
+        app.logger.error("Ralat fallback TA: %s", e)
+        return None
+
 def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None:
     if not HAS_TV_TA:
-        return None
+        return get_fallback_ta(raw_symbol, interval_key)
 
     sym = raw_symbol.upper().strip().replace("/", "").replace("-", "").replace("PERP", "")
     tv_intervals = {
@@ -396,7 +540,10 @@ def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None
                 }
         except Exception:
             continue
-    return None
+
+    # Fallback automatik jika TradingView rate-limit / disekat
+    return get_fallback_ta(raw_symbol, interval_key)
+
 
 
 def load_brain_prompt() -> str:
@@ -681,40 +828,41 @@ def telegram_webhook():
                 send_telegram(f"❌ Simbol tidak ditemui di TradingView: <code>{sym}</code>", chat_id=chat_id)
             return "OK", 200
 
-        # 4. Semakan Ticker Pantas Tanpa '/' (Contoh: 'btc', 'maybank', 'sol 4h', 'nvda')
+        # 4. Permintaan Carta & Analisis Pasaran
+        # Menyokong: 'chart xrp', 'carta btc', 'tunjuk graf maybank', 'xrp 4h', 'sol', 'user request chart xrp'
         status_handled = False
-        parts = text.split()
-        if len(parts) in [1, 2]:
-            cand_sym = parts[0]
-            cand_tf = parts[1] if len(parts) == 2 and parts[1].lower() in INTERVAL_MAP else "1h"
-            ta = get_tradingview_ta(cand_sym, cand_tf)
-            if ta:
-                send_ta_card(ta)
-                status_handled = True
+        clean_words = re.findall(r'[A-Za-z0-9]+', text)
+        clean_upper = [w.upper() for w in clean_words]
 
-        # 5. Soalan Status / Analisis dalam Bahasa Biasa (Contoh: 'apa status cimb', 'tengok harga tesla')
-        if not status_handled and any(k in clean_lower for k in [
-            "status", "harga", "price", "analis", "analisis", "analisa", "trend",
-            "tengok", "check", "semak", "macam mana", "bagaimana", "view"
-        ]):
-            words = re.findall(r'[A-Za-z0-9]+', text)
+        CHART_AND_TA_TRIGGERS = {
+            "CHART", "CARTA", "GRAF", "GRAPH", "KANDIL", "CANDLESTICK",
+            "STATUS", "HARGA", "PRICE", "ANALIS", "ANALISIS", "ANALISA",
+            "TREND", "TENGOK", "CHECK", "SEMAK", "VIEW", "SHOW"
+        }
+        is_ta_or_chart_intent = any(w in CHART_AND_TA_TRIGGERS for w in clean_upper) or len(clean_words) <= 3
+
+        if is_ta_or_chart_intent:
             timeframe = "1h"
-            for w in words:
+            for w in clean_words:
                 if w.lower() in INTERVAL_MAP:
                     timeframe = w.lower()
                     break
-            stopwords = {
-                "STATUS", "HARGA", "PRICE", "TREND", "DAN", "SAYA", "KAU", "INI",
-                "ITU", "HARI", "MACAM", "MANA", "TAK", "TENGOK", "BAGAIMANA", "DI",
-                "KE", "DARI", "UNTUK", "TENTANG", "NAK", "CHECK", "ANALISIS",
-                "ANALISA", "VIEW", "PASARAN", "BOLEH", "TOLONG", "BERIKAN", "SEMAK",
-                "APA", "APAKAH", "BERAPA"
+
+            IGNORE_WORDS = {
+                "CHART", "CARTA", "GRAF", "GRAPH", "KANDIL", "CANDLESTICK",
+                "USER", "REQUEST", "MINTA", "TUNJUK", "BAGI", "LIHAT", "TENGOK",
+                "TOLONG", "NAK", "VIEW", "SHOW", "PLEASE", "UNTUK", "INI", "ITU",
+                "PADA", "HARGA", "STATUS", "ANALISIS", "ANALISA", "TREND", "CHECK",
+                "SEMAK", "DAN", "SAYA", "KAU", "HARI", "MACAM", "MANA", "TAK",
+                "DI", "KE", "DARI", "PASARAN", "BOLEH", "BERIKAN", "APA", "APAKAH",
+                "BERAPA", "TF", "TIMEFRAME", "1M", "5M", "15M", "1H", "4H", "1D", "1W"
             }
-            for w in words:
-                if len(w) >= 2 and w.upper() not in stopwords:
-                    ta = get_tradingview_ta(w, timeframe)
-                    if ta:
-                        send_ta_card(ta)
+
+            for w in clean_words:
+                if len(w) >= 2 and w.upper() not in IGNORE_WORDS:
+                    ta_res = get_tradingview_ta(w, timeframe)
+                    if ta_res:
+                        send_ta_card(ta_res)
                         status_handled = True
                         break
 
