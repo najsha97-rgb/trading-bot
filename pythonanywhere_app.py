@@ -1,11 +1,10 @@
 """
 Telegram AI Bot + TradingView Webhook Receiver for PythonAnywhere (WSGI/Flask)
-- Receives alerts from TradingView via POST /tradingview
-- Live TradingView technical indicators query via /status
-- Step-by-step indicator & strategy guides via /indicator and /strategy
-- Sends alerts directly to Telegram with Gemini AI analysis
-- Handles user chats from Telegram via POST /webhook
-- 100% compatible with PythonAnywhere free tier
+- Menerima alert dari TradingView via POST /tradingview
+- Query status teknikal TradingView via /status
+- Panduan indikator & strategi via /indicator & /strategy
+- Format kemas, bersih, tiada simbol bintang (*) yang berselerak
+- 100% serasi dengan akaun percuma PythonAnywhere
 """
 
 import json
@@ -15,7 +14,6 @@ import re
 import requests
 from flask import Flask, jsonify, request
 
-# Load .env if present
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -39,6 +37,22 @@ GEMINI_API_KEY     = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3-flash-preview"
 
 
+# ── Text Cleaner ──────────────────────────────────────────────────────────────
+
+def format_clean_telegram(text: str) -> str:
+    """Membersihkan simbol bintang (*) dan formatkan dengan kemas untuk Telegram."""
+    if not text:
+        return ""
+    text = re.sub(r'^#{1,6}\s*(.+)$', r'📌 <b>\1</b>', text, flags=re.MULTILINE)
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'(?<!\w)\*([^\*\n]+?)\*(?!\w)', r'<i>\1</i>', text)
+    text = re.sub(r'(?<!\w)_([^_\n]+?)_(?!\w)', r'<i>\1</i>', text)
+    text = re.sub(r'^\s*[\*\-•]\s+', '🔹 ', text, flags=re.MULTILINE)
+    text = text.replace('*', '')
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
 # ── Telegram Helper ───────────────────────────────────────────────────────────
 
 def send_telegram(text: str, chat_id: str = None) -> bool:
@@ -51,7 +65,7 @@ def send_telegram(text: str, chat_id: str = None) -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": target_chat,
-        "text": text,
+        "text": format_clean_telegram(text),
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
@@ -130,7 +144,6 @@ def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None
                 "neutral": summary.get("NEUTRAL", 0),
                 "rsi": round(inds.get("RSI", 0) or 0, 2),
                 "macd": round(inds.get("MACD.macd", 0) or 0, 2),
-                "macd_signal": round(inds.get("MACD.signal", 0) or 0, 2),
                 "ema20": round(inds.get("EMA20", 0) or 0, 2),
                 "ema50": round(inds.get("EMA50", 0) or 0, 2),
                 "ema200": round(inds.get("EMA200", 0) or 0, 2),
@@ -151,8 +164,12 @@ def call_gemini(prompt: str, system_prompt: str = "") -> str:
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
     }
-    if system_prompt:
-        body["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+    sys_instruction = system_prompt or (
+        "Anda adalah pembantu analisis crypto profesional. "
+        "DILARANG guna simbol bintang (*). Gunakan ikon (🔹, 📈, 📉, 💡, 🛡️) untuk poin. "
+        "Gunakan Bahasa Melayu yang ringkas dan padat."
+    )
+    body["systemInstruction"] = {"parts": [{"text": sys_instruction}]}
 
     try:
         r = requests.post(url, json=body, timeout=15)
@@ -162,7 +179,7 @@ def call_gemini(prompt: str, system_prompt: str = "") -> str:
             if candidates:
                 parts = candidates[0].get("content", {}).get("parts", [])
                 if parts:
-                    return parts[0].get("text", "").strip()
+                    return format_clean_telegram(parts[0].get("text", "").strip())
         else:
             app.logger.warning("Gemini API error: %s - %s", r.status_code, r.text[:120])
     except Exception as e:
@@ -200,24 +217,24 @@ def tradingview_alert():
 
         lines = [
             badge,
-            "━━━━━━━━━━━━━━━━━━━━",
-            f"📊 <b>Pair/Ticker:</b> <code>{ticker}</code>",
-            f"🎯 <b>Action:</b> <b>{action}</b>",
+            "────────────────────────",
+            f"📊 <b>Pair:</b> <code>{ticker}</code>",
+            f"🎯 <b>Isyarat:</b> <b>{action}</b>",
         ]
         if price:
-            lines.append(f"💰 <b>Price:</b> <code>{price}</code>")
+            lines.append(f"💰 <b>Harga:</b> <code>{price}</code>")
         if time_s:
-            lines.append(f"⏱ <b>Time:</b> {time_s}")
+            lines.append(f"⏱ <b>Masa:</b> {time_s}")
         if msg:
-            lines.append(f"\n📝 <b>Details:</b> {msg}")
+            lines.append(f"\n📝 <b>Butiran:</b> {msg}")
 
         ai_prompt = (
-            f"Alert triggered: {action} on {ticker} at price {price}. Alert message: {msg}. "
-            f"Give a 2-sentence concise trading risk & technical reminder in Bahasa Melayu or English."
+            f"Alert triggered: {action} on {ticker} at price {price}. "
+            f"Beri ulasan teknikal & peringatan risiko dalam 2 baris ringkas tanpa simbol bintang."
         )
-        ai_analysis = call_gemini(ai_prompt, "You are a professional crypto & forex risk manager.")
+        ai_analysis = call_gemini(ai_prompt)
         if ai_analysis:
-            lines.append(f"\n🧠 <b>AI Quick Take:</b>\n<i>{ai_analysis}</i>")
+            lines.append(f"\n💡 <b>Ulasan AI:</b>\n{ai_analysis}")
 
         formatted_msg = "\n".join(lines)
         send_telegram(formatted_msg)
@@ -248,14 +265,16 @@ def telegram_webhook():
 
         if text.startswith("/start"):
             send_telegram(
-                "👋 <b>Helo! Saya AI Trading Assistant anda yang disambung ke TradingView.</b>\n\n"
-                "<b>Arahan yang boleh anda cuba:</b>\n"
-                "📊 <code>/status BTC</code> — Semak status teknikal live TradingView\n"
-                "📊 <code>/status SOL 4h</code> — Semak status timeframe 4 Jam\n"
-                "🛠 <code>/indicator</code> — Panduan masukkan indikator dalam TradingView\n"
-                "📈 <code>/strategy</code> — Panduan setup alert strategi ke Telegram\n"
-                "🧹 <code>/clear</code> — Kosongkan ingatan perbualan\n\n"
-                "Atau taip sebarang soalan pasaran terus!",
+                "👋 <b>Selamat Datang ke AI Trading Assistant!</b>\n"
+                "Disambungkan terus ke data langsung TradingView.\n"
+                "────────────────────────\n\n"
+                "📌 <b>Arahan Pantas:</b>\n"
+                "🔹 <code>/status BTC</code> — Semak status teknikal semasa\n"
+                "🔹 <code>/status SOL 4h</code> — Semak status timeframe 4 jam\n"
+                "🔹 <code>/indicator</code> — Panduan masukkan indikator TradingView\n"
+                "🔹 <code>/strategy</code> — Panduan setup alert strategi ke Telegram\n"
+                "🔹 <code>/clear</code> — Kosongkan ingatan perbualan\n\n"
+                "💬 Anda juga boleh bertanya soalan pasaran terus!",
                 chat_id=chat_id,
             )
         elif text.startswith("/status") or text.startswith("/ta"):
@@ -268,20 +287,21 @@ def telegram_webhook():
                 badge = "🟢 BUY" if "BUY" in rec else ("🔴 SELL" if "SELL" in rec else "⚪ NEUTRAL")
                 p_str = f"${ta['price']:,.2f}" if isinstance(ta['price'], (int, float)) else str(ta['price'])
                 ai_text = call_gemini(
-                    f"TradingView data for {ta['symbol']}: Price {p_str}, RSI {ta['rsi']}, Signal {rec}, EMA20 {ta['ema20']}, EMA50 {ta['ema50']}. Give a 3-sentence technical summary.",
-                    "Expert Crypto Technical Analyst"
+                    f"TradingView data for {ta['symbol']}: Price {p_str}, RSI {ta['rsi']}, Signal {rec}, EMA20 {ta['ema20']}, EMA50 {ta['ema50']}. Ulas dalam 3 baris ringkas tanpa simbol bintang."
                 )
                 msg = (
-                    f"📊 <b>STATUS TRADINGVIEW: {ta['symbol']}</b> (TF: <code>{ta['interval']}</code>)\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📊 <b>ANALISIS PASARAN: {ta['symbol']}</b>\n"
+                    f"⏱ Timeframe: <code>{ta['interval']}</code>\n"
+                    f"────────────────────────\n"
                     f"💰 <b>Harga Semasa:</b> <code>{p_str}</code>\n"
-                    f"🎯 <b>Isyarat Teknikal:</b> <b>{badge}</b>\n"
-                    f"📈 <b>Skor:</b> 🟢 {ta['buy']} | ⚪ {ta['neutral']} | 🔴 {ta['sell']}\n\n"
-                    f"• <b>RSI (14):</b> <code>{ta['rsi']}</code>\n"
-                    f"• <b>MACD:</b> <code>{ta['macd']}</code>\n"
-                    f"• <b>EMA 20:</b> <code>${ta['ema20']:,.2f}</code>\n"
-                    f"• <b>EMA 50:</b> <code>${ta['ema50']:,.2f}</code>\n\n"
-                    f"🧠 <b>Ulasan AI:</b>\n{ai_text}"
+                    f"🎯 <b>Isyarat:</b> <b>{badge}</b>\n"
+                    f"📈 <b>Skor Indikator:</b> 🟢 {ta['buy']} Beli | ⚪ {ta['neutral']} Neutral | 🔴 {ta['sell']} Jual\n\n"
+                    f"📋 <b>Indikator Utama:</b>\n"
+                    f"🔹 <b>RSI (14):</b> <code>{ta['rsi']}</code>\n"
+                    f"🔹 <b>MACD:</b> <code>{ta['macd']}</code>\n"
+                    f"🔹 <b>EMA 20:</b> <code>${ta['ema20']:,.2f}</code>\n"
+                    f"🔹 <b>EMA 50:</b> <code>${ta['ema50']:,.2f}</code>\n\n"
+                    f"💡 <b>Ulasan AI:</b>\n{ai_text}"
                 )
                 send_telegram(msg, chat_id=chat_id)
             else:
@@ -289,24 +309,46 @@ def telegram_webhook():
 
         elif text.startswith("/indicator") or text.startswith("/indikator"):
             guide = (
-                "🛠 <b>CARA MEMASUKKAN INDIKATOR DI TRADINGVIEW:</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "1. Buka carta TradingView, klik butang <b>Indicators (fx)</b> di bar atas.\n"
-                "2. <b>Relative Strength Index (RSI):</b> Taip 'RSI' (Setting: 14).\n"
-                "3. <b>EMA (Exponential Moving Average):</b> Masukkan 2 kali (EMA 20 & EMA 50).\n"
-                "4. <b>MACD:</b> Untuk mengesan momentum pembalikan arah.\n\n"
-                "👉 Taip <code>/strategy</code> untuk cara pasang Alert Webhook ke Telegram!"
+                "🛠 <b>PANDUAN MEMASUKKAN INDIKATOR DI TRADINGVIEW</b>\n"
+                "────────────────────────\n\n"
+                "1️⃣ <b>Buka Menu Indikator</b>\n"
+                "Buka carta TradingView, klik butang <b>Indicators (fx)</b> pada bar atas.\n\n"
+                "2️⃣ <b>Indikator Utama yang Disyorkan</b>\n\n"
+                "🔹 <b>RSI (Relative Strength Index)</b>\n"
+                "▫️ Taip 'RSI' dan pilih <i>Relative Strength Index</i>.\n"
+                "▫️ Setting: Length 14.\n"
+                "▫️ Panduan: Bawah 30 (Oversold / Potensi Beli), atas 70 (Overbought / Potensi Jual).\n\n"
+                "🔹 <b>EMA Cross (Moving Average Exponential)</b>\n"
+                "▫️ Masukkan EMA dua kali ke carta.\n"
+                "▫️ EMA Pertama: Tukar Length kepada <b>20</b>.\n"
+                "▫️ EMA Kedua: Tukar Length kepada <b>50</b>.\n"
+                "▫️ Strategi: EMA 20 silang ke atas EMA 50 menandakan permulaan trend kenaikan.\n\n"
+                "🔹 <b>MACD (Moving Average Convergence Divergence)</b>\n"
+                "▫️ Mengesan momentum pasaran dan titik perubahan arah harga.\n\n"
+                "👉 Taip <code>/strategy</code> untuk melihat cara memasang alert webhook ke Telegram!"
             )
             send_telegram(guide, chat_id=chat_id)
 
         elif text.startswith("/strategy") or text.startswith("/strategi"):
             guide = (
-                "📈 <b>CARA SETUP ALERT STRATEGI KE TELEGRAM:</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "1. Di carta TradingView, klik ikon jam loceng (Alert / Alt+A).\n"
-                "2. Di tab <b>Notifications</b>: Tanda <b>Webhook URL</b> dan masukkan URL webhook anda.\n"
-                "3. Di tab <b>Settings (Message)</b>: Masukkan JSON alert.\n"
-                "4. Klik <b>Create</b>. Selesai!"
+                "📈 <b>PANDUAN SETUP STRATEGI & ALERT WEBHOOK</b>\n"
+                "────────────────────────\n\n"
+                "1️⃣ <b>Cipta Alert Baharu</b>\n"
+                "Di carta TradingView, klik ikon jam loceng ⏰ atau tekan <b>Alt + A</b>.\n\n"
+                "2️⃣ <b>Tetapan Webhook URL</b>\n"
+                "Buka tab <b>Notifications</b>, tandakan <b>Webhook URL</b> dan masukkan:\n"
+                "<code>https://NAMA_USER.pythonanywhere.com/tradingview</code>\n\n"
+                "3️⃣ <b>Format Mesej Alert</b>\n"
+                "Buka tab <b>Settings</b>, masukkan kod JSON ini ke dalam kotak <b>Message</b>:\n\n"
+                "<code>{\n"
+                '  "ticker": "{{ticker}}",\n'
+                '  "action": "{{strategy.order.action}}",\n'
+                '  "price": "{{close}}",\n'
+                '  "time": "{{time}}",\n'
+                '  "message": "Isyarat masuk dari strategi!"\n'
+                "}</code>\n\n"
+                "4️⃣ <b>Simpan Alert</b>\n"
+                "Klik butang <b>Create</b>. Bot akan menghantar notifikasi kemas ke Telegram setiap kali alert berbunyi."
             )
             send_telegram(guide, chat_id=chat_id)
 
@@ -319,12 +361,14 @@ def telegram_webhook():
                 ta = get_tradingview_ta(match.group(1), "1h")
                 if ta:
                     context = (
-                        f"Live TradingView technical indicators: Pair {ta['symbol']}, Price ${ta['price']}, Signal {ta['recommendation']} "
-                        f"(Buy {ta['buy']}, Sell {ta['sell']}), RSI {ta['rsi']}, EMA20 {ta['ema20']}, EMA50 {ta['ema50']}."
+                        f"TradingView Technical Data for {ta['symbol']}:\n"
+                        f"Harga: ${ta['price']}, Isyarat: {ta['recommendation']} "
+                        f"(Buy:{ta['buy']}, Sell:{ta['sell']}, Neutral:{ta['neutral']}), "
+                        f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {ta['ema20']}, EMA50: {ta['ema50']}."
                     )
             prompt = f"Data Pasaran:\n{context}\n\nSoalan: {text}" if context else text
-            ai_reply = call_gemini(prompt, "You are an expert AI trading & crypto assistant.")
-            send_telegram(ai_reply or "Maaf, tidak dapat menjana respons.", chat_id=chat_id)
+            ai_reply = call_gemini(prompt)
+            send_telegram(ai_reply or "Maaf, tiada respon dijana.", chat_id=chat_id)
 
         return "OK", 200
     except Exception as e:

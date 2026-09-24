@@ -1,8 +1,6 @@
 """
 Telegram AI Bot — Local Polling Runner + TradingView Live Data
-- Mengambil data teknikal langsung (RSI, MACD, EMA, Signal) dari TradingView
-- Menjawab soalan analisis crypto menggunakan TradingView + Gemini AI
-- Memberikan panduan cara memasukkan indikator & strategi ke dalam TradingView
+Format kemas, bersih, tiada simbol bintang (*) yang berselerak, menggunakan ikon/emoji yang mudah dibaca.
 """
 
 import asyncio
@@ -32,7 +30,7 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("tg-ai-bot-local")
 
@@ -49,12 +47,44 @@ GEMINI_MODELS = [
     "gemini-3.8-flash",
 ]
 
-SYSTEM_PROMPT = """You are an expert AI Trading and Crypto Assistant connected with TradingView live technical indicators.
-You provide clear, accurate, and insightful technical analysis, crypto market trends, trading strategies, and risk management tips.
-Always be polite, concise, and helpful. You understand and can reply in Bahasa Melayu or English depending on user language.
-When provided with real-time TradingView technical data (Price, RSI, MACD, EMA20/50/200, Buy/Sell rating), reference those numbers directly to explain the current market structure."""
+SYSTEM_PROMPT = """Anda adalah pembantu analisis pasaran crypto dan trading profesional.
+ARAHAN FORMAT PENTING:
+1. DILARANG KERAS menggunakan simbol bintang (*) atau (**). JANGAN gunakan markdown asterisk.
+2. Gunakan ikon dan emoji yang kemas (seperti 🔹, 📈, 📉, 🎯, 💡, 🛡️, 💰) untuk senarai dan poin utama.
+3. Susun jawapan dengan tajuk ringkas, perenggan pendek (2-3 baris), dan ruang kosong yang selesa dibaca.
+4. Terangkan dengan Bahasa Melayu yang ringkas, tepat, padat, dan mudah difahami.
+5. Nyatakan aras sokongan (Support), aras rintangan (Resistance), dan pesanan kawalan risiko."""
 
 conversations: dict[str, list] = {}
+
+
+# ── Text Cleaner & Formatter ──────────────────────────────────────────────────
+
+def format_clean_telegram(text: str) -> str:
+    """Membersihkan sebarang simbol bintang (*) dan formatkan dengan kemas untuk Telegram."""
+    if not text:
+        return ""
+
+    # Tukar header markdown (### Header) kepada bold dengan ikon
+    text = re.sub(r'^#{1,6}\s*(.+)$', r'📌 <b>\1</b>', text, flags=re.MULTILINE)
+
+    # Tukar **bold** kepada <b>bold</b>
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+
+    # Tukar *italic* atau _italic_ kepada <i>italic</i>
+    text = re.sub(r'(?<!\w)\*([^\*\n]+?)\*(?!\w)', r'<i>\1</i>', text)
+    text = re.sub(r'(?<!\w)_([^_\n]+?)_(?!\w)', r'<i>\1</i>', text)
+
+    # Tukar bullet point (* atau -) kepada ikon 🔹
+    text = re.sub(r'^\s*[\*\-•]\s+', '🔹 ', text, flags=re.MULTILINE)
+
+    # Padam sebarang baki simbol bintang (*)
+    text = text.replace('*', '')
+
+    # Kurangkan jarak baris berlebihan
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    return text.strip()
 
 
 # ── TradingView TA Helper ──────────────────────────────────────────────────────
@@ -70,7 +100,6 @@ INTERVAL_MAP = {
 }
 
 def clean_crypto_symbol(raw: str) -> str:
-    """Normalize input like btc, btc/usdt, bitcoin to BTCUSDT."""
     raw = raw.upper().strip().replace("/", "").replace("-", "").replace("PERP", "")
     known = {
         "BITCOIN": "BTCUSDT",
@@ -87,7 +116,6 @@ def clean_crypto_symbol(raw: str) -> str:
     return raw
 
 def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None:
-    """Fetch live technical analysis indicators from TradingView."""
     sym = clean_crypto_symbol(raw_symbol)
     interval = INTERVAL_MAP.get(interval_key.lower(), Interval.INTERVAL_1_HOUR)
 
@@ -114,11 +142,9 @@ def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None
                 "neutral": summary.get("NEUTRAL", 0),
                 "rsi": round(inds.get("RSI", 0) or 0, 2),
                 "macd": round(inds.get("MACD.macd", 0) or 0, 2),
-                "macd_signal": round(inds.get("MACD.signal", 0) or 0, 2),
                 "ema20": round(inds.get("EMA20", 0) or 0, 2),
                 "ema50": round(inds.get("EMA50", 0) or 0, 2),
                 "ema200": round(inds.get("EMA200", 0) or 0, 2),
-                "volume": inds.get("volume"),
             }
         except Exception:
             continue
@@ -155,7 +181,11 @@ async def ask_gemini(chat_id: str, user_message: str, context: str = "") -> str:
 
     prompt_to_send = user_message
     if context:
-        prompt_to_send = f"Data Pasaran TradingView Semasa:\n{context}\n\nSoalan Pengguna:\n{user_message}"
+        prompt_to_send = (
+            f"Data Pasaran TradingView:\n{context}\n\n"
+            f"Soalan Pengguna: {user_message}\n"
+            f"Peringatan: JANGAN gunakan simbol bintang (*). Gunakan ikon (🔹, 📈, 📉, 💡) untuk senarai."
+        )
 
     history = conversations.setdefault(chat_id, [])
     history.append(types.Content(role="user", parts=[types.Part(text=prompt_to_send)]))
@@ -173,25 +203,26 @@ async def ask_gemini(chat_id: str, user_message: str, context: str = "") -> str:
                     max_output_tokens=1024,
                 ),
             )
-            reply = response.text or "Maaf, saya tidak dapat menjana respons."
-            history.append(types.Content(role="model", parts=[types.Part(text=reply)]))
+            raw_reply = response.text or "Maaf, tiada respon dijana."
+            clean_reply = format_clean_telegram(raw_reply)
+
+            history.append(types.Content(role="model", parts=[types.Part(text=clean_reply)]))
             if len(history) > 40:
                 conversations[chat_id] = history[-40:]
-            logger.info("✅ Berjaya respon melalui %s", model)
-            return reply
+            logger.info("✅ Respon berjaya via %s", model)
+            return clean_reply
         except Exception as e:
-            logger.warning("⚠️ Model %s ralat: %s", model, str(e)[:80])
+            logger.warning("Model %s ralat: %s", model, str(e)[:80])
             last_error = e
             continue
 
     history.pop()
-    return f"⚠️ Semua model sedang sibuk. Sila cuba lagi sebentar. (Ralat: {last_error})"
+    return f"⚠️ Model AI sedang sibuk. Sila cuba sebentar lagi."
 
 
 # ── Status Handler ────────────────────────────────────────────────────────────
 
 async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: list[str]) -> None:
-    """Handles /status <symbol> [timeframe]."""
     symbol = args[0] if args else "BTC"
     interval = args[1] if len(args) > 1 else "1h"
 
@@ -200,12 +231,13 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
 
     if not ta:
         await send_message(client, chat_id,
-            f"❌ <b>Simbol tidak dijumpai di TradingView:</b> <code>{symbol}</code>\n"
-            "Contoh penggunaan: <code>/status BTC</code> atau <code>/status SOL 4h</code>"
+            f"❌ <b>Simbol tidak ditemui di TradingView:</b> <code>{symbol}</code>\n\n"
+            "Contoh arahan yang betul:\n"
+            "🔹 <code>/status BTC</code>\n"
+            "🔹 <code>/status SOL 4h</code>"
         )
         return
 
-    # Visual badge
     rec = ta["recommendation"]
     if "STRONG_BUY" in rec:
         badge = "🟢🔥 <b>STRONG BUY</b>"
@@ -221,82 +253,85 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
     price_str = f"${ta['price']:,.2f}" if isinstance(ta['price'], (int, float)) else str(ta['price'])
     rsi_str = f"{ta['rsi']}"
     if ta['rsi'] >= 70:
-        rsi_str += " (⚠️ Overbought)"
+        rsi_str += " ⚠️ Overbought"
     elif ta['rsi'] <= 30:
-        rsi_str += " (💡 Oversold)"
+        rsi_str += " 💡 Oversold"
 
     ta_context = (
         f"Pair: {ta['symbol']} ({ta['exchange']}), Timeframe: {ta['interval']}\n"
-        f"Harga: {price_str}\n"
-        f"Rating TradingView: {rec} (Buy: {ta['buy']}, Sell: {ta['sell']}, Neutral: {ta['neutral']})\n"
+        f"Harga: {price_str}, Rating: {rec} (Buy: {ta['buy']}, Sell: {ta['sell']}, Neutral: {ta['neutral']})\n"
         f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {ta['ema20']}, EMA50: {ta['ema50']}, EMA200: {ta['ema200']}"
     )
 
-    # Ask Gemini for quick tactical breakdown
     ai_comment = await ask_gemini(
         chat_id,
-        f"Berikan ulasan teknikal 3-4 ayat berdasarkan data TradingView ini untuk {ta['symbol']}. Nyatakan cadangan support, resistance, dan pengurusan risiko.",
+        f"Ulas data TradingView ini untuk {ta['symbol']}. Berikan sokongan, rintangan, dan kawalan risiko dalam 3-4 baris.",
         context=ta_context
     )
 
     msg = (
-        f"📊 <b>STATUS TRADINGVIEW: {ta['symbol']}</b> (TF: <code>{ta['interval']}</code>)\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>ANALISIS PASARAN: {ta['symbol']}</b>\n"
+        f"⏱ Timeframe: <code>{ta['interval']}</code>\n"
+        f"────────────────────────\n"
         f"💰 <b>Harga Semasa:</b> <code>{price_str}</code>\n"
         f"🎯 <b>Isyarat Teknikal:</b> {badge}\n"
-        f"📈 <b>Skor Indikator:</b> 🟢 {ta['buy']} | ⚪ {ta['neutral']} | 🔴 {ta['sell']}\n\n"
-        f"<b>Indikator Utama:</b>\n"
-        f"• <b>RSI (14):</b> <code>{rsi_str}</code>\n"
-        f"• <b>MACD:</b> <code>{ta['macd']}</code>\n"
-        f"• <b>EMA 20:</b> <code>${ta['ema20']:,.2f}</code>\n"
-        f"• <b>EMA 50:</b> <code>${ta['ema50']:,.2f}</code>\n"
-        f"• <b>EMA 200:</b> <code>${ta['ema200']:,.2f}</code>\n\n"
-        f"🧠 <b>Ulasan AI Gemini:</b>\n{ai_comment}"
+        f"📈 <b>Skor Indikator:</b> 🟢 {ta['buy']} Beli | ⚪ {ta['neutral']} Neutral | 🔴 {ta['sell']} Jual\n\n"
+        f"📋 <b>Indikator Utama:</b>\n"
+        f"🔹 <b>RSI (14):</b> <code>{rsi_str}</code>\n"
+        f"🔹 <b>MACD:</b> <code>{ta['macd']}</code>\n"
+        f"🔹 <b>EMA 20:</b> <code>${ta['ema20']:,.2f}</code>\n"
+        f"🔹 <b>EMA 50:</b> <code>${ta['ema50']:,.2f}</code>\n"
+        f"🔹 <b>EMA 200:</b> <code>${ta['ema200']:,.2f}</code>\n\n"
+        f"💡 <b>Ulasan AI:</b>\n"
+        f"{ai_comment}"
     )
 
     await send_message(client, chat_id, msg)
 
 
-# ── Indicator & Strategy Guide ────────────────────────────────────────────────
+# ── Guides (Clean & Readable) ─────────────────────────────────────────────────
 
 def get_indicator_guide() -> str:
     return (
-        "🛠 <b>PANDUAN MEMASUKKAN INDIKATOR DI TRADINGVIEW:</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>Langkah 1 — Buka Menu Indikator:</b>\n"
-        "Di bahagian atas carta TradingView, klik butang <b>Indicators</b> (ikon <b>fx</b> atau tekan kekunci <code>/</code>).\n\n"
-        "<b>Langkah 2 — Cari & Masukkan Indikator Asas:</b>\n"
-        "1. <b>Relative Strength Index (RSI):</b>\n"
-        "   • Taip 'RSI' → Klik <i>Relative Strength Index</i>.\n"
-        "   • <i>Setting:</i> Length 14 (Zon 30 = Oversold / Potensi Buy, Zon 70 = Overbought).\n\n"
-        "2. <b>Exponential Moving Average (EMA Cross):</b>\n"
-        "   • Taip 'EMA' → Masukkan 2 kali.\n"
-        "   • <i>Setting EMA 1:</i> Length <b>20</b> (Warna Kuning/Biru).\n"
-        "   • <i>Setting EMA 2:</i> Length <b>50</b> (Warna Merah).\n"
-        "   • <i>Strategi:</i> Bila EMA 20 silang ke atas EMA 50 = Golden Cross (Buy).\n\n"
-        "3. <b>MACD (Moving Average Convergence Divergence):</b>\n"
-        "   • Mengesan momentum trend dan pembalikan arah harga.\n\n"
-        "👉 Taip <code>/strategy</code> untuk melihat cara memasang strategi & alert webhook!"
+        "🛠 <b>PANDUAN MEMASUKKAN INDIKATOR DI TRADINGVIEW</b>\n"
+        "────────────────────────\n\n"
+        "1️⃣ <b>Buka Menu Indikator</b>\n"
+        "Buka carta TradingView, klik butang <b>Indicators (fx)</b> pada bar atas.\n\n"
+        "2️⃣ <b>Indikator Utama yang Disyorkan</b>\n\n"
+        "🔹 <b>RSI (Relative Strength Index)</b>\n"
+        "▫️ Taip 'RSI' dan pilih <i>Relative Strength Index</i>.\n"
+        "▫️ Setting: Length 14.\n"
+        "▫️ Panduan: Bawah 30 (Oversold / Potensi Beli), atas 70 (Overbought / Potensi Jual).\n\n"
+        "🔹 <b>EMA Cross (Moving Average Exponential)</b>\n"
+        "▫️ Masukkan EMA dua kali ke carta.\n"
+        "▫️ EMA Pertama: Tukar Length kepada <b>20</b>.\n"
+        "▫️ EMA Kedua: Tukar Length kepada <b>50</b>.\n"
+        "▫️ Strategi: EMA 20 silang ke atas EMA 50 menandakan permulaan trend kenaikan.\n\n"
+        "🔹 <b>MACD (Moving Average Convergence Divergence)</b>\n"
+        "▫️ Mengesan momentum pasaran dan titik perubahan arah harga.\n\n"
+        "👉 Taip <code>/strategy</code> untuk melihat cara memasang alert webhook ke Telegram!"
     )
 
 def get_strategy_guide() -> str:
     return (
-        "📈 <b>PANDUAN SETUP STRATEGI & ALERT WEBHOOK:</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>Cara Pasang Alert Webhook ke Bot Telegram:</b>\n\n"
-        "1. Klik kanan pada indikator / carta → pilih <b>Add Alert</b> (atau <kbd>Alt</kbd> + <kbd>A</kbd>).\n"
-        "2. Di tab <b>Notifications</b>:\n"
-        "   • Tandakan kotak <b>Webhook URL</b>.\n"
-        "   • Masukkan URL bot anda: <code>https://NAMA_USER.pythonanywhere.com/tradingview</code>\n\n"
-        "3. Di tab <b>Settings</b> (Message Box), masukkan format JSON ini:\n"
+        "📈 <b>PANDUAN SETUP STRATEGI & ALERT WEBHOOK</b>\n"
+        "────────────────────────\n\n"
+        "1️⃣ <b>Cipta Alert Baharu</b>\n"
+        "Di carta TradingView, klik ikon jam loceng ⏰ atau tekan <b>Alt + A</b>.\n\n"
+        "2️⃣ <b>Tetapan Webhook URL</b>\n"
+        "Buka tab <b>Notifications</b>, tandakan <b>Webhook URL</b> dan masukkan:\n"
+        "<code>https://NAMA_USER.pythonanywhere.com/tradingview</code>\n\n"
+        "3️⃣ <b>Format Mesej Alert</b>\n"
+        "Buka tab <b>Settings</b>, masukkan kod JSON ini ke dalam kotak <b>Message</b>:\n\n"
         "<code>{\n"
         '  "ticker": "{{ticker}}",\n'
         '  "action": "{{strategy.order.action}}",\n'
         '  "price": "{{close}}",\n'
         '  "time": "{{time}}",\n'
-        '  "message": "Signal triggered!"\n'
+        '  "message": "Isyarat masuk dari strategi!"\n'
         "}</code>\n\n"
-        "4. Klik <b>Create</b>. Selesai! Bot akan terima isyarat secara automatik."
+        "4️⃣ <b>Simpan Alert</b>\n"
+        "Klik butang <b>Create</b>. Bot akan menghantar notifikasi kemas ke Telegram setiap kali alert berbunyi."
     )
 
 
@@ -305,15 +340,16 @@ def get_strategy_guide() -> str:
 async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, args: list[str]) -> None:
     if command == "/start":
         await send_message(client, chat_id,
-            "👋 <b>Helo! Saya AI Trading Assistant anda yang disambung ke TradingView.</b>\n\n"
-            "<b>Arahan yang boleh anda cuba:</b>\n"
-            "📊 <code>/status BTC</code> — Semak status teknikal live TradingView\n"
-            "📊 <code>/status SOL 4h</code> — Semak status pada timeframe 4 Jam\n"
-            "🛠 <code>/indicator</code> — Panduan memasukkan indikator dalam TradingView\n"
-            "📈 <code>/strategy</code> — Panduan setup alert strategi ke Telegram\n"
-            "🧹 <code>/clear</code> — Kosongkan ingatan perbualan\n\n"
-            "Atau anda boleh terus bertanya dalam bahasa biasa, contohnya:\n"
-            "<i>'Apa status pasaran ETH sekarang?'</i>"
+            "👋 <b>Selamat Datang ke AI Trading Assistant!</b>\n"
+            "Disambungkan terus ke data langsung TradingView.\n"
+            "────────────────────────\n\n"
+            "📌 <b>Arahan Pantas:</b>\n"
+            "🔹 <code>/status BTC</code> — Semak status teknikal semasa\n"
+            "🔹 <code>/status SOL 4h</code> — Semak status timeframe 4 jam\n"
+            "🔹 <code>/indicator</code> — Panduan masukkan indikator TradingView\n"
+            "🔹 <code>/strategy</code> — Panduan setup alert strategi ke Telegram\n"
+            "🔹 <code>/clear</code> — Kosongkan ingatan perbualan\n\n"
+            "💬 Anda juga boleh bertanya soalan pasaran terus dalam perbualan ini!"
         )
     elif command in ["/status", "/ta", "/analisa"]:
         await handle_status_command(client, chat_id, args)
@@ -323,20 +359,21 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
         await send_message(client, chat_id, get_strategy_guide())
     elif command == "/help":
         await send_message(client, chat_id,
-            "🤖 <b>Senarai Arahan Tersedia:</b>\n\n"
-            "/status &lt;crypto&gt; [tf] — Data langsung TradingView (RSI, MACD, EMA, Signal)\n"
-            "/indicator — Panduan masukkan indikator TradingView\n"
-            "/strategy — Panduan buat strategi alert webhook\n"
-            "/clear — Kosongkan sejarah perbualan\n"
-            "/ping — Uji status bot"
+            "🤖 <b>Senarai Arahan Tersedia:</b>\n"
+            "────────────────────────\n"
+            "🔹 <code>/status &lt;crypto&gt; [tf]</code> — Analisis teknikal live TradingView\n"
+            "🔹 <code>/indicator</code> — Panduan indikator TradingView\n"
+            "🔹 <code>/strategy</code> — Panduan alert strategi webhook\n"
+            "🔹 <code>/clear</code> — Kosongkan ingatan perbualan\n"
+            "🔹 <code>/ping</code> — Semak status bot"
         )
     elif command == "/clear":
         conversations.pop(chat_id, None)
-        await send_message(client, chat_id, "🧹 Sejarah perbualan telah dikosongkan.")
+        await send_message(client, chat_id, "🧹 Ingatan perbualan telah dikosongkan.")
     elif command == "/ping":
         await send_message(client, chat_id, "🏓 Pong! Bot aktif dengan sambungan TradingView.")
     else:
-        await send_message(client, chat_id, f"❓ Arahan tidak dikenali: {command}\nTaip /help untuk bantuan.")
+        await send_message(client, chat_id, f"❓ Arahan tidak dikenali: {command}\nTaip /help untuk senarai arahan.")
 
 
 # ── Main Polling Loop ──────────────────────────────────────────────────────────
@@ -346,12 +383,10 @@ async def main():
         print("Ralat: TELEGRAM_BOT_TOKEN tiada dalam fail .env!")
         return
 
-    print("Memulakan Telegram AI Bot + TradingView Live Engine...")
+    print("Memulakan Telegram AI Bot (Format Kemas & Bersih)...")
     print("Bot sedang mendengar mesej dari Telegram...")
-    print("Tekan Ctrl+C di terminal ini untuk berhenti.\n")
 
     async with httpx.AsyncClient(timeout=35.0) as client:
-        # Padam webhook lama supaya Telegram hantar mesej secara polling
         await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook")
 
         offset = 0
@@ -387,7 +422,6 @@ async def main():
                         args = parts[1:]
                         await handle_command(client, chat_id, cmd, args)
                     else:
-                        # Semak jika user bertanya tentang status sesuatu crypto dalam teks biasa
                         match = re.search(r'\b(btc|eth|sol|xrp|doge|ada|bnb|avax|link|near|sui|pepe|bitcoin|ethereum|solana)\b', text, re.IGNORECASE)
                         context = ""
                         if match and any(k in text.lower() for k in ["status", "harga", "price", "analis", "analisis", "signal", "trend", "tengok"]):
@@ -395,8 +429,8 @@ async def main():
                             ta = get_tradingview_ta(detected_coin, "1h")
                             if ta:
                                 context = (
-                                    f"TradingView Real-Time Technical Data for {ta['symbol']}:\n"
-                                    f"Harga: ${ta['price']}, Signal TradingView: {ta['recommendation']} "
+                                    f"TradingView Technical Data for {ta['symbol']}:\n"
+                                    f"Harga: ${ta['price']}, Isyarat: {ta['recommendation']} "
                                     f"(Buy:{ta['buy']}, Sell:{ta['sell']}, Neutral:{ta['neutral']}), "
                                     f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {ta['ema20']}, EMA50: {ta['ema50']}, EMA200: {ta['ema200']}"
                                 )
