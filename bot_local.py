@@ -26,6 +26,10 @@ try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -211,17 +215,20 @@ def get_fallback_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None:
                 pass
 
         # 3. US Stocks / Forex via yfinance
-        if df is None or df.empty:
-            is_forex = len(sym) == 6 and any(fx in sym for fx in ["MYR", "EUR", "GBP", "USD", "JPY", "SGD"])
-            yf_sym = f"{sym}=X" if is_forex else sym
-            yf_tf = "1d" if interval_key.lower() in ["1d", "1w"] else "1h"
-            yf_df = yf.Ticker(yf_sym).history(period="2mo", interval=yf_tf)
-            if not yf_df.empty:
-                df = yf_df.reset_index()
-                df.columns = [c.lower() for c in df.columns]
-                market_type = "Forex" if is_forex else "Saham US"
-                exchange = "OANDA" if is_forex else "NASDAQ"
-                curr = "" if is_forex else "$"
+        if (df is None or df.empty) and yf:
+            try:
+                is_forex = len(sym) == 6 and any(fx in sym for fx in ["MYR", "EUR", "GBP", "USD", "JPY", "SGD"])
+                yf_sym = f"{sym}=X" if is_forex else sym
+                yf_tf = "1d" if interval_key.lower() in ["1d", "1w"] else "1h"
+                yf_df = yf.Ticker(yf_sym).history(period="2mo", interval=yf_tf)
+                if not yf_df.empty:
+                    df = yf_df.reset_index()
+                    df.columns = [c.lower() for c in df.columns]
+                    market_type = "Forex" if is_forex else "Saham US"
+                    exchange = "OANDA" if is_forex else "NASDAQ"
+                    curr = "" if is_forex else "$"
+            except Exception:
+                pass
 
         if df is None or df.empty or len(df) < 5:
             return None
@@ -573,11 +580,12 @@ def attach_disclaimer(text: str) -> str:
 
 # ── Most Active Screener (Bursa Malaysia & NASDAQ) ────────────────────────────
 
-def get_bursa_active_card(limit: int = 10) -> str:
+def get_bursa_active_cards(limit: int = 50) -> list[str]:
     """
     Mengambil senarai kaunter paling aktif harian di Bursa Malaysia
     terus daripada ShareInvestor (Top Active Counters DA02).
     Waktu dagangan rasmi Bursa Malaysia: 9:00 AM - 5:00 PM (Sesi Pagi & Petang).
+    Menghasilkan senarai mesej (Bhg 1 & Bhg 2 jika > 25) bagi mematuhi had aksara Telegram.
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -588,15 +596,15 @@ def get_bursa_active_card(limit: int = 10) -> str:
     try:
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code != 200:
-            return (
+            return [(
                 "⚠️ <b>Gagal memuat turun data ShareInvestor buat masa ini.</b>\n"
                 "Sila layari terus: <a href=\"https://www.shareinvestor.com/prices/stock_prices\">ShareInvestor Stock Prices</a>\n\n"
                 f"{DISCLAIMER_HTML}"
-            )
+            )]
         data = r.json()
-        stocks = data.get("stock_info", [])
+        stocks = data.get("stock_info", [])[:limit]
         if not stocks:
-            return "⚠️ Tiada data kaunter aktif diterima daripada ShareInvestor."
+            return ["⚠️ Tiada data kaunter aktif diterima daripada ShareInvestor."]
 
         tz = ZoneInfo("Asia/Kuala_Lumpur")
         now = datetime.now(tz)
@@ -618,16 +626,8 @@ def get_bursa_active_card(limit: int = 10) -> str:
         time_str = now.strftime("%d %b %Y, %I:%M %p")
         rank_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
-        lines = [
-            f"📊 <b>TOP {min(limit, len(stocks))} KAUNTER AKTIF BURSA MALAYSIA</b>",
-            "🏛 Sumber: <a href=\"https://www.shareinvestor.com/prices/stock_prices\">ShareInvestor Stock Prices</a>",
-            f"⏱ Status: {status_str}",
-            f"🕒 Dikemaskini: <code>{time_str} MYT</code>",
-            "────────────────────────\n",
-        ]
-
-        for idx, s in enumerate(stocks[:limit]):
-            rank = rank_emojis[idx] if idx < len(rank_emojis) else f"{idx+1}."
+        def format_row(i, s):
+            rk = rank_emojis[i] if i < len(rank_emojis) else f"<b>{i+1}.</b>"
             name = s.get("Name", "").strip()
             code = s.get("Symbol", "").strip()
             price = s.get("Last Done", "0.00").strip()
@@ -651,26 +651,57 @@ def get_bursa_active_card(limit: int = 10) -> str:
                 except Exception:
                     pass
 
-            chg_display = f"{chg} ({pct}%)" if chg != "-" else f"{pct}%"
-            lines.append(f"{rank} <b>{name}</b> (<code>{code}</code>){shariah}")
-            lines.append(f"💰 RM{price} | {badge} {chg_display}")
-            lines.append(f"📦 Volum: <code>{vol}</code>\n")
+            chg_display = f"{pct}%" if pct != "-" else "0.00%"
+            return f"{rk} <b>{name}</b> (<code>{code}</code>){shariah} — RM{price} | {badge} {chg_display} | Vol: <code>{vol}</code>"
 
-        lines.append("💡 <i>Tip: Taip kod atau nama kaunter (cth: <code>zetrix</code> atau <code>0138</code>) untuk melihat ulasan & carta lilin teknikal.</i>\n")
-        lines.append(DISCLAIMER_HTML)
-        return "\n".join(lines)
+        if len(stocks) <= 25:
+            lines = [
+                f"📊 <b>TOP {len(stocks)} KAUNTER AKTIF BURSA MALAYSIA</b>",
+                "🏛 Sumber: <a href=\"https://www.shareinvestor.com/prices/stock_prices\">ShareInvestor Stock Prices</a>",
+                f"⏱ Status: {status_str}",
+                f"🕒 Dikemaskini: <code>{time_str} MYT</code>",
+                "────────────────────────",
+            ]
+            for i, s in enumerate(stocks):
+                lines.append(format_row(i, s))
+            lines.append("\n💡 <i>Tip: Taip kod atau nama kaunter (cth: <code>zetrix</code> atau <code>0138</code>) untuk melihat ulasan & carta lilin teknikal.</i>\n")
+            lines.append(DISCLAIMER_HTML)
+            return ["\n".join(lines)]
+
+        p1 = [
+            f"📊 <b>TOP {len(stocks)} KAUNTER AKTIF BURSA MALAYSIA (Bhg 1: #1 - #25)</b>",
+            "🏛 Sumber: <a href=\"https://www.shareinvestor.com/prices/stock_prices\">ShareInvestor Stock Prices</a>",
+            f"⏱ Status: {status_str}",
+            f"🕒 Dikemaskini: <code>{time_str} MYT</code>",
+            "────────────────────────",
+        ]
+        for i, s in enumerate(stocks[:25]):
+            p1.append(format_row(i, s))
+
+        p2 = [
+            f"📊 <b>TOP {len(stocks)} KAUNTER AKTIF BURSA MALAYSIA (Bhg 2: #26 - #{len(stocks)})</b>",
+            "────────────────────────",
+        ]
+        for i, s in enumerate(stocks[25:], start=25):
+            p2.append(format_row(i, s))
+
+        p2.append("\n💡 <i>Tip: Taip kod atau nama mana-mana kaunter (cth: <code>zetrix</code> atau <code>0138</code>) untuk melihat ulasan & carta lilin teknikal.</i>\n")
+        p2.append(DISCLAIMER_HTML)
+
+        return ["\n".join(p1), "\n".join(p2)]
     except Exception as e:
-        logger.error("Ralat get_bursa_active_card: %s", e)
-        return f"⚠️ Ralat memproses data kaunter aktif Bursa: {e}"
+        logger.error("Ralat get_bursa_active_cards: %s", e)
+        return [f"⚠️ Ralat memproses data kaunter aktif Bursa: {e}"]
 
 
-def get_nasdaq_active_card(limit: int = 10) -> str:
+def get_nasdaq_active_cards(limit: int = 50) -> list[str]:
     """
     Mengambil senarai saham paling aktif di pasaran NASDAQ & US
     terus daripada Yahoo Finance Screener (Most Active).
+    Menghasilkan senarai mesej (Bhg 1 & Bhg 2 jika > 25) bagi mematuhi had aksara Telegram.
     """
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&scrIds=most_actives&count=50"
+    url = f"https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&scrIds=most_actives&count={limit}"
     try:
         quotes = []
         try:
@@ -690,11 +721,11 @@ def get_nasdaq_active_card(limit: int = 10) -> str:
                 quotes = []
 
         if not quotes:
-            return (
+            return [(
                 "⚠️ <b>Gagal memuat turun data Yahoo Finance Screener buat masa ini.</b>\n"
                 "Sila layari terus: <a href=\"https://finance.yahoo.com/research-hub/screener/most-active?start=0&count=50\">Yahoo Finance Screener</a>\n\n"
                 f"{DISCLAIMER_HTML}"
-            )
+            )]
 
         nasdaq_quotes = []
         other_quotes = []
@@ -712,33 +743,53 @@ def get_nasdaq_active_card(limit: int = 10) -> str:
         time_str = now.strftime("%d %b %Y, %I:%M %p")
         rank_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
-        lines = [
-            f"📊 <b>TOP {min(limit, len(sorted_quotes))} KAUNTER AKTIF NASDAQ / US</b>",
-            "🏛 Sumber: <a href=\"https://finance.yahoo.com/research-hub/screener/most-active?start=0&count=50\">Yahoo Finance Screener</a>",
-            f"🕒 Sesi Pasaran: <code>{time_str} EDT</code>",
-            "────────────────────────\n",
-        ]
-
-        for idx, q in enumerate(sorted_quotes):
-            rank = rank_emojis[idx] if idx < len(rank_emojis) else f"{idx+1}."
+        def format_row(i, q):
+            rk = rank_emojis[i] if i < len(rank_emojis) else f"<b>{i+1}.</b>"
             sym = q.get("symbol", "").strip()
-            name = q.get("shortName") or q.get("displayName") or sym
+            name = (q.get("shortName") or q.get("displayName") or sym).strip()
             price = q.get("regularMarketPrice", 0.0)
             chg_pct = q.get("regularMarketChangePercent", 0.0)
             vol = q.get("regularMarketVolume", 0)
             exch = q.get("fullExchangeName") or q.get("exchange") or "NASDAQ"
-
             badge = "🟢" if chg_pct > 0 else ("🔴" if chg_pct < 0 else "⚪")
-            lines.append(f"{rank} <b>{sym}</b> — {name} (<i>{exch}</i>)")
-            lines.append(f"💰 ${price:,.2f} | {badge} {chg_pct:+.2f}%")
-            lines.append(f"📦 Volum: <code>{vol:,}</code>\n")
+            return f"{rk} <b>{sym}</b> — {name} (<i>{exch}</i>) | ${price:,.2f} | {badge} {chg_pct:+.2f}% | Vol: <code>{vol:,}</code>"
 
-        lines.append("💡 <i>Tip: Taip simbol saham (cth: <code>nvda</code> atau <code>tsla</code>) untuk melihat ulasan & carta lilin teknikal.</i>\n")
-        lines.append(DISCLAIMER_HTML)
-        return "\n".join(lines)
+        if len(sorted_quotes) <= 25:
+            lines = [
+                f"📊 <b>TOP {len(sorted_quotes)} KAUNTER AKTIF NASDAQ / US</b>",
+                "🏛 Sumber: <a href=\"https://finance.yahoo.com/research-hub/screener/most-active?start=0&count=50\">Yahoo Finance Screener</a>",
+                f"🕒 Sesi Pasaran: <code>{time_str} EDT</code>",
+                "────────────────────────",
+            ]
+            for i, q in enumerate(sorted_quotes):
+                lines.append(format_row(i, q))
+            lines.append("\n💡 <i>Tip: Taip simbol saham (cth: <code>nvda</code> atau <code>tsla</code>) untuk melihat ulasan & carta lilin teknikal.</i>\n")
+            lines.append(DISCLAIMER_HTML)
+            return ["\n".join(lines)]
+
+        p1 = [
+            f"📊 <b>TOP {len(sorted_quotes)} KAUNTER AKTIF NASDAQ / US (Bhg 1: #1 - #25)</b>",
+            "🏛 Sumber: <a href=\"https://finance.yahoo.com/research-hub/screener/most-active?start=0&count=50\">Yahoo Finance Screener</a>",
+            f"🕒 Sesi Pasaran: <code>{time_str} EDT</code>",
+            "────────────────────────",
+        ]
+        for i, q in enumerate(sorted_quotes[:25]):
+            p1.append(format_row(i, q))
+
+        p2 = [
+            f"📊 <b>TOP {len(sorted_quotes)} KAUNTER AKTIF NASDAQ / US (Bhg 2: #26 - #{len(sorted_quotes)})</b>",
+            "────────────────────────",
+        ]
+        for i, q in enumerate(sorted_quotes[25:], start=25):
+            p2.append(format_row(i, q))
+
+        p2.append("\n💡 <i>Tip: Taip simbol saham (cth: <code>nvda</code> atau <code>tsla</code>) untuk melihat ulasan & carta lilin teknikal.</i>\n")
+        p2.append(DISCLAIMER_HTML)
+
+        return ["\n".join(p1), "\n".join(p2)]
     except Exception as e:
-        logger.error("Ralat get_nasdaq_active_card: %s", e)
-        return f"⚠️ Ralat memproses data kaunter aktif NASDAQ: {e}"
+        logger.error("Ralat get_nasdaq_active_cards: %s", e)
+        return [f"⚠️ Ralat memproses data kaunter aktif NASDAQ: {e}"]
 
 
 
@@ -930,8 +981,8 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
             "────────────────────────\n\n"
             "💡 <b>Paling Mudah:</b> Anda <b>TIDAK PERLU</b> taip simbol '/' langsung! Boleh taip nama saham atau tanya soalan macam biasa.\n\n"
             "📌 <b>Contoh Taip Terus (Tanpa '/'):</b>\n"
-            "🔹 <code>kaunter aktif bursa</code> — Top 10 Kaunter Aktif Harian (ShareInvestor 9am-5pm)\n"
-            "🔹 <code>kaunter aktif nasdaq</code> — Top 10 Saham Paling Aktif US (Yahoo Finance)\n"
+            "🔹 <code>kaunter aktif bursa</code> — Top 50 Kaunter Aktif Harian (ShareInvestor 9am-5pm)\n"
+            "🔹 <code>kaunter aktif nasdaq</code> — Top 50 Saham Paling Aktif US (Yahoo Finance)\n"
             "🔹 <code>chart xrp</code> atau <code>sol 4h</code> — Analisis Kripto & Carta Lilin\n"
             "🔹 <code>maybank</code> atau <code>cimb</code> — Saham Bursa Malaysia\n"
             "🔹 <code>nvda</code> atau <code>tsla 1d</code> — Saham US / NASDAQ\n"
@@ -946,12 +997,16 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
     elif command in ["/aktif", "/active", "/top", "/mostactive"]:
         sub = args[0].lower() if args else ""
         if "bursa" in sub or "my" in sub or "malaysia" in sub:
-            await send_message(client, chat_id, get_bursa_active_card(10))
+            for card in get_bursa_active_cards(50):
+                await send_message(client, chat_id, card)
         elif "nasdaq" in sub or "us" in sub or "nyse" in sub:
-            await send_message(client, chat_id, get_nasdaq_active_card(10))
+            for card in get_nasdaq_active_cards(50):
+                await send_message(client, chat_id, card)
         else:
-            await send_message(client, chat_id, get_bursa_active_card(5))
-            await send_message(client, chat_id, get_nasdaq_active_card(5))
+            for card in get_bursa_active_cards(50):
+                await send_message(client, chat_id, card)
+            for card in get_nasdaq_active_cards(50):
+                await send_message(client, chat_id, card)
     elif command in ["/indicator", "/indikator"]:
         await send_message(client, chat_id, get_indicator_guide())
     elif command in ["/strategy", "/strategi"]:
@@ -1058,17 +1113,25 @@ async def main():
                         # 2.5 Kaunter Aktif Pasaran (Bursa Malaysia via ShareInvestor & NASDAQ via Yahoo Finance)
                         if any(k in clean_lower for k in [
                             "kaunter aktif", "top aktif", "saham aktif", "most active", "top volume",
-                            "aktif bursa", "bursa aktif", "aktif nasdaq", "nasdaq aktif"
+                            "aktif bursa", "bursa aktif", "aktif nasdaq", "nasdaq aktif",
+                            "50 kaunter", "senarai kaunter", "kaunter paling aktif"
                         ]):
-                            if any(b in clean_lower for b in ["bursa", "malaysia", "klse", "my"]):
-                                await send_message(client, chat_id, get_bursa_active_card(10))
+                            is_bursa = any(b in clean_lower for b in ["bursa", "malaysia", "klse", "my"])
+                            is_nasdaq = any(n in clean_lower for n in ["nasdaq", "us", "amerika", "nyse"])
+
+                            if is_bursa and not is_nasdaq:
+                                for card in get_bursa_active_cards(50):
+                                    await send_message(client, chat_id, card)
                                 continue
-                            elif any(n in clean_lower for n in ["nasdaq", "us", "amerika", "nyse"]):
-                                await send_message(client, chat_id, get_nasdaq_active_card(10))
+                            elif is_nasdaq and not is_bursa:
+                                for card in get_nasdaq_active_cards(50):
+                                    await send_message(client, chat_id, card)
                                 continue
                             else:
-                                await send_message(client, chat_id, get_bursa_active_card(5))
-                                await send_message(client, chat_id, get_nasdaq_active_card(5))
+                                for card in get_bursa_active_cards(50):
+                                    await send_message(client, chat_id, card)
+                                for card in get_nasdaq_active_cards(50):
+                                    await send_message(client, chat_id, card)
                                 continue
 
                         # 3. Permintaan Carta & Analisis Pasaran

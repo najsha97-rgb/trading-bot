@@ -68,6 +68,11 @@ Jika pengguna bertanya soalan konsep, indikator, atau strategi:
 ---
 
 ## 7. CARIAN KAUNTER AKTIF PASARAN (MOST ACTIVE SCREENER INTENT)
+- **Kapasiti Kaunter**: Wajib menyediakan senarai penuh **50 kaunter aktif** untuk Bursa Malaysia dan NASDAQ / US.
+- **Strategi Pembahagian Mesej (Telegram Split)**:
+  - Disebabkan had maksimum 4,096 aksara Telegram dan paparan terperinci setiap baris, senarai 50 kaunter dibahagikan secara automatik kepada 2 bahagian mesej kemas:
+    - **Bahagian 1**: Kaunter ranking #1 hingga #25 (~2,600 - 3,000 aksara).
+    - **Bahagian 2**: Kaunter ranking #26 hingga #50 (~2,800 - 3,100 aksara), diakhiri dengan tips carian dan penafian kewangan.
 - **Sumber Data Rasmi**:
   1. **Bursa Malaysia (Aktif Harian 9.00 AM - 5.00 PM)**:
      - Sumber rujukan: `https://www.shareinvestor.com/prices/stock_prices` (Top Active Counters `DA02`).
@@ -81,4 +86,5 @@ Jika pengguna bertanya soalan konsep, indikator, atau strategi:
   - Gunakan emoji kemas (📊, 🏛, 💰, 📦, 🟢, 🔴, ⚪, ☪️, 💡).
   - Berikan panduan bahawa pengguna boleh terus menaip nama mana-mana kaunter untuk melihat analisis carta teknikal.
   - Wajib sertakan penafian risiko kewangan di bahagian bawah.
+
 
