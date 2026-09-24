@@ -14,6 +14,12 @@ import re
 import requests
 from flask import Flask, jsonify, request
 
+from datetime import datetime, time
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -83,6 +89,175 @@ def attach_disclaimer(text: str) -> str:
     if any(k in lower for k in ["bukan nasihat kewangan", "penafian:", "dyor", "not financial advice"]):
         return text
     return f"{text.rstrip()}\n\n{DISCLAIMER_HTML}"
+
+
+# ── Most Active Screener (Bursa Malaysia & NASDAQ) ────────────────────────────
+
+def get_bursa_active_card(limit: int = 10) -> str:
+    """
+    Mengambil senarai kaunter paling aktif harian di Bursa Malaysia
+    terus daripada ShareInvestor (Top Active Counters DA02).
+    Waktu dagangan rasmi Bursa Malaysia: 9:00 AM - 5:00 PM (Sesi Pagi & Petang).
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.shareinvestor.com/prices/stock_prices",
+    }
+    url = "https://www.shareinvestor.com/api/v1/prices/stock_prices.json?tab=counters&filter=DA02&type=ranking&layout=trading_data&page=1&market=bursa"
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return (
+                "⚠️ <b>Gagal memuat turun data ShareInvestor buat masa ini.</b>\n"
+                "Sila layari terus: <a href=\"https://www.shareinvestor.com/prices/stock_prices\">ShareInvestor Stock Prices</a>\n\n"
+                f"{DISCLAIMER_HTML}"
+            )
+        data = r.json()
+        stocks = data.get("stock_info", [])
+        if not stocks:
+            return "⚠️ Tiada data kaunter aktif diterima daripada ShareInvestor."
+
+        tz = ZoneInfo("Asia/Kuala_Lumpur")
+        now = datetime.now(tz)
+        weekday = now.weekday()
+        t = now.time()
+
+        if weekday in range(0, 5):
+            if time(9, 0) <= t < time(12, 30):
+                status_str = "🟢 <b>Pasaran Dibuka (Sesi Pagi)</b>"
+            elif time(12, 30) <= t < time(14, 30):
+                status_str = "🟡 <b>Rehat Tengah Hari (Buka semula 2:30 PM)</b>"
+            elif time(14, 30) <= t < time(17, 0):
+                status_str = "🟢 <b>Pasaran Dibuka (Sesi Petang)</b>"
+            else:
+                status_str = "🔴 <b>Pasaran Ditutup (Waktu Dagangan: 9:00 AM - 5:00 PM)</b>"
+        else:
+            status_str = "🔴 <b>Pasaran Ditutup (Hujung Minggu)</b>"
+
+        time_str = now.strftime("%d %b %Y, %I:%M %p")
+        rank_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+        lines = [
+            f"📊 <b>TOP {min(limit, len(stocks))} KAUNTER AKTIF BURSA MALAYSIA</b>",
+            "🏛 Sumber: <a href=\"https://www.shareinvestor.com/prices/stock_prices\">ShareInvestor Stock Prices</a>",
+            f"⏱ Status: {status_str}",
+            f"🕒 Dikemaskini: <code>{time_str} MYT</code>",
+            "────────────────────────\n",
+        ]
+
+        for idx, s in enumerate(stocks[:limit]):
+            rank = rank_emojis[idx] if idx < len(rank_emojis) else f"{idx+1}."
+            name = s.get("Name", "").strip()
+            code = s.get("Symbol", "").strip()
+            price = s.get("Last Done", "0.00").strip()
+            chg = s.get("Chg", "").strip()
+            pct = s.get("% Chg", "").strip()
+            vol = s.get("Vol", "0").strip()
+            shariah = " ☪️" if s.get("Is Shariah") else ""
+
+            badge = "⚪"
+            if chg.startswith("+"):
+                badge = "🟢"
+            elif chg.startswith("-"):
+                badge = "🔴"
+            elif pct and pct != "-":
+                try:
+                    val = float(pct.replace("+", ""))
+                    if val > 0:
+                        badge = "🟢"
+                    elif val < 0:
+                        badge = "🔴"
+                except Exception:
+                    pass
+
+            chg_display = f"{chg} ({pct}%)" if chg != "-" else f"{pct}%"
+            lines.append(f"{rank} <b>{name}</b> (<code>{code}</code>){shariah}")
+            lines.append(f"💰 RM{price} | {badge} {chg_display}")
+            lines.append(f"📦 Volum: <code>{vol}</code>\n")
+
+        lines.append("💡 <i>Tip: Taip kod atau nama kaunter (cth: <code>zetrix</code> atau <code>0138</code>) untuk melihat ulasan & carta lilin teknikal.</i>\n")
+        lines.append(DISCLAIMER_HTML)
+        return "\n".join(lines)
+    except Exception as e:
+        app.logger.error("Ralat get_bursa_active_card: %s", e)
+        return f"⚠️ Ralat memproses data kaunter aktif Bursa: {e}"
+
+
+def get_nasdaq_active_card(limit: int = 10) -> str:
+    """
+    Mengambil senarai saham paling aktif di pasaran NASDAQ & US
+    terus daripada Yahoo Finance Screener (Most Active).
+    """
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&scrIds=most_actives&count=50"
+    try:
+        quotes = []
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                quotes = data.get("finance", {}).get("result", [{}])[0].get("quotes", [])
+        except Exception:
+            quotes = []
+
+        if not quotes and HAS_CHART:
+            try:
+                res = yf.screen("most_actives")
+                quotes = res.get("quotes", [])
+            except Exception:
+                quotes = []
+
+        if not quotes:
+            return (
+                "⚠️ <b>Gagal memuat turun data Yahoo Finance Screener buat masa ini.</b>\n"
+                "Sila layari terus: <a href=\"https://finance.yahoo.com/research-hub/screener/most-active?start=0&count=50\">Yahoo Finance Screener</a>\n\n"
+                f"{DISCLAIMER_HTML}"
+            )
+
+        nasdaq_quotes = []
+        other_quotes = []
+        for q in quotes:
+            exch = (q.get("fullExchangeName", "") or q.get("exchange", "")).upper()
+            if any(k in exch for k in ["NASDAQ", "NMS", "NGS", "NCM"]):
+                nasdaq_quotes.append(q)
+            else:
+                other_quotes.append(q)
+
+        sorted_quotes = (nasdaq_quotes + other_quotes)[:limit]
+
+        tz = ZoneInfo("America/New_York")
+        now = datetime.now(tz)
+        time_str = now.strftime("%d %b %Y, %I:%M %p")
+        rank_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+        lines = [
+            f"📊 <b>TOP {min(limit, len(sorted_quotes))} KAUNTER AKTIF NASDAQ / US</b>",
+            "🏛 Sumber: <a href=\"https://finance.yahoo.com/research-hub/screener/most-active?start=0&count=50\">Yahoo Finance Screener</a>",
+            f"🕒 Sesi Pasaran: <code>{time_str} EDT</code>",
+            "────────────────────────\n",
+        ]
+
+        for idx, q in enumerate(sorted_quotes):
+            rank = rank_emojis[idx] if idx < len(rank_emojis) else f"{idx+1}."
+            sym = q.get("symbol", "").strip()
+            name = q.get("shortName") or q.get("displayName") or sym
+            price = q.get("regularMarketPrice", 0.0)
+            chg_pct = q.get("regularMarketChangePercent", 0.0)
+            vol = q.get("regularMarketVolume", 0)
+            exch = q.get("fullExchangeName") or q.get("exchange") or "NASDAQ"
+
+            badge = "🟢" if chg_pct > 0 else ("🔴" if chg_pct < 0 else "⚪")
+            lines.append(f"{rank} <b>{sym}</b> — {name} (<i>{exch}</i>)")
+            lines.append(f"💰 ${price:,.2f} | {badge} {chg_pct:+.2f}%")
+            lines.append(f"📦 Volum: <code>{vol:,}</code>\n")
+
+        lines.append("💡 <i>Tip: Taip simbol saham (cth: <code>nvda</code> atau <code>tsla</code>) untuk melihat ulasan & carta lilin teknikal.</i>\n")
+        lines.append(DISCLAIMER_HTML)
+        return "\n".join(lines)
+    except Exception as e:
+        app.logger.error("Ralat get_nasdaq_active_card: %s", e)
+        return f"⚠️ Ralat memproses data kaunter aktif NASDAQ: {e}"
 
 
 # ── Telegram Helper ───────────────────────────────────────────────────────────
@@ -677,19 +852,20 @@ def telegram_webhook():
         if text.startswith("/start"):
             send_telegram(
                 "👋 <b>Selamat Datang ke AI Trading Assistant!</b>\n"
-                "Disambungkan terus ke TradingView untuk Kripto, Saham Bursa Malaysia & Global (NASDAQ/NYSE).\n"
+                "Disambungkan terus ke TradingView, ShareInvestor (Bursa) & Yahoo Finance (NASDAQ).\n"
                 "────────────────────────\n\n"
                 "💡 <b>Paling Mudah:</b> Anda <b>TIDAK PERLU</b> taip simbol '/' langsung! Boleh taip nama saham atau tanya soalan macam biasa.\n\n"
                 "📌 <b>Contoh Taip Terus (Tanpa '/'):</b>\n"
-                "🔹 <code>btc</code> atau <code>sol 4h</code> — Analisis Kripto\n"
+                "🔹 <code>kaunter aktif bursa</code> — Top 10 Kaunter Aktif Harian (ShareInvestor 9am-5pm)\n"
+                "🔹 <code>kaunter aktif nasdaq</code> — Top 10 Saham Paling Aktif US (Yahoo Finance)\n"
+                "🔹 <code>chart xrp</code> atau <code>sol 4h</code> — Analisis Kripto & Carta Lilin\n"
                 "🔹 <code>maybank</code> atau <code>cimb</code> — Saham Bursa Malaysia\n"
                 "🔹 <code>nvda</code> atau <code>tsla 1d</code> — Saham US / NASDAQ\n"
                 "🔹 <code>usdmyr</code> — Pasaran Forex\n"
-                "🔹 <i>'tengok harga maybank'</i> — Analisis automatik\n"
                 "🔹 <i>'panduan indikator'</i> — Cara pasang RSI & EMA\n"
                 "🔹 <i>'setup alert'</i> — Cara sambung webhook TradingView\n\n"
                 "🤖 Boleh juga gunakan arahan biasa:\n"
-                f"🔹 <code>/status BTC</code> | <code>/indicator</code> | <code>/strategy</code>\n\n"
+                f"🔹 <code>/aktif bursa</code> | <code>/aktif nasdaq</code> | <code>/status BTC</code> | <code>/strategy</code>\n\n"
                 f"{DISCLAIMER_HTML}",
                 chat_id=chat_id,
             )
@@ -700,10 +876,12 @@ def telegram_webhook():
                 "🤖 <b>Panduan Penggunaan Bot:</b>\n"
                 "────────────────────────\n"
                 "💡 <i>Tip: Anda boleh taip terus tanpa simbol '/'!</i>\n\n"
+                "🔹 <b>Kaunter Aktif Bursa:</b> Taip <i>'kaunter aktif bursa'</i> atau <code>/aktif bursa</code>\n"
+                "🔹 <b>Kaunter Aktif NASDAQ:</b> Taip <i>'kaunter aktif nasdaq'</i> atau <code>/aktif nasdaq</code>\n"
                 "🔹 <b>Carian Ticker Pantas:</b> Taip <code>btc</code>, <code>maybank</code>, <code>nvda</code>, atau <code>sol 4h</code>\n"
+                "🔹 <b>Carta Teknikal:</b> Taip <i>'chart xrp'</i>, <i>'carta btc'</i> atau <i>'graf maybank'</i>\n"
                 "🔹 <b>Panduan Indikator:</b> Taip <i>'indikator'</i> atau <code>/indicator</code>\n"
-                "🔹 <b>Setup Alert:</b> Taip <i>'alert'</i>, <i>'strategi'</i> atau <code>/strategy</code>\n"
-                "🔹 <b>Tanya Soalan Terbuka:</b> Taip apa sahaja seperti <i>'adakah bagus beli btc sekarang?'</i>\n\n"
+                "🔹 <b>Setup Alert:</b> Taip <i>'alert'</i>, <i>'strategi'</i> atau <code>/strategy</code>\n\n"
                 f"{DISCLAIMER_HTML}",
                 chat_id=chat_id,
             )
@@ -816,6 +994,33 @@ def telegram_webhook():
             else:
                 send_telegram(msg, chat_id=chat_id)
 
+        # 2.5 Arahan Standard /aktif atau /active
+        if text.startswith("/aktif") or text.startswith("/active") or text.startswith("/top") or text.startswith("/mostactive"):
+            parts = text.split()
+            sub = parts[1].lower() if len(parts) > 1 else ""
+            if "bursa" in sub or "my" in sub or "malaysia" in sub:
+                send_telegram(get_bursa_active_card(10), chat_id=chat_id)
+            elif "nasdaq" in sub or "us" in sub or "nyse" in sub:
+                send_telegram(get_nasdaq_active_card(10), chat_id=chat_id)
+            else:
+                send_telegram(get_bursa_active_card(5), chat_id=chat_id)
+                send_telegram(get_nasdaq_active_card(5), chat_id=chat_id)
+            return "OK", 200
+
+        # 2.6 Kaunter Aktif Pasaran (Bahasa Biasa)
+        if any(k in clean_lower for k in [
+            "kaunter aktif", "top aktif", "saham aktif", "most active", "top volume",
+            "aktif bursa", "bursa aktif", "aktif nasdaq", "nasdaq aktif"
+        ]):
+            if any(b in clean_lower for b in ["bursa", "malaysia", "klse", "my"]):
+                send_telegram(get_bursa_active_card(10), chat_id=chat_id)
+            elif any(n in clean_lower for n in ["nasdaq", "us", "amerika", "nyse"]):
+                send_telegram(get_nasdaq_active_card(10), chat_id=chat_id)
+            else:
+                send_telegram(get_bursa_active_card(5), chat_id=chat_id)
+                send_telegram(get_nasdaq_active_card(5), chat_id=chat_id)
+            return "OK", 200
+
         # 3. Arahan Standard /status atau /ta
         if text.startswith("/status") or text.startswith("/ta") or text.startswith("/analisa"):
             parts = text.split()
@@ -855,7 +1060,8 @@ def telegram_webhook():
                 "PADA", "HARGA", "STATUS", "ANALISIS", "ANALISA", "TREND", "CHECK",
                 "SEMAK", "DAN", "SAYA", "KAU", "HARI", "MACAM", "MANA", "TAK",
                 "DI", "KE", "DARI", "PASARAN", "BOLEH", "BERIKAN", "APA", "APAKAH",
-                "BERAPA", "TF", "TIMEFRAME", "1M", "5M", "15M", "1H", "4H", "1D", "1W"
+                "BERAPA", "TF", "TIMEFRAME", "1M", "5M", "15M", "1H", "4H", "1D", "1W",
+                "AKTIF", "ACTIVE", "TOP", "MOST", "VOLUME", "SAHAM", "KAUNTER"
             }
 
             for w in clean_words:

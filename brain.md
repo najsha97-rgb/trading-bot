@@ -64,3 +64,21 @@ Jika pengguna bertanya soalan konsep, indikator, atau strategi:
   1. **Wajib Hantar Gambar Carta:** Sistem MESTI menjana dan melampirkan gambar carta candlestick teknikal resolusi tinggi bersama garisan EMA 20 & EMA 50.
   2. **Struktur Ulasan:** Sertakan ringkasan data [HEAD], indikator utama [BODY], dan aras sokongan/rintangan [FOOTER] bersama penafian risiko.
   3. **Ketahanan Data (Fault-Tolerant):** Sekiranya pelayan TradingView sibuk/rate-limit, sistem MESTI beralih secara automatik ke sumber lilin pasaran langsung (Binance / Yahoo Finance) agar carta sentiasa berjaya dihantar kepada pengguna tanpa gagal.
+
+---
+
+## 7. CARIAN KAUNTER AKTIF PASARAN (MOST ACTIVE SCREENER INTENT)
+- **Sumber Data Rasmi**:
+  1. **Bursa Malaysia (Aktif Harian 9.00 AM - 5.00 PM)**:
+     - Sumber rujukan: `https://www.shareinvestor.com/prices/stock_prices` (Top Active Counters `DA02`).
+     - Paparkan: Kedudukan (Rank), Kod Saham, Nama Syarikat, Harga Terakhir (RM), Perubahan & Peratusan (+/-), Jumlah Volum Dagangan, serta status patuh Syariah (☪️).
+     - Nyatakan waktu dagangan Bursa (9.00 AM - 5.00 PM) berserta status sesi semasa.
+  2. **NASDAQ / Pasaran US**:
+     - Sumber rujukan: `https://finance.yahoo.com/research-hub/screener/most-active?start=0&count=50` (Yahoo Finance Most Active Screener).
+     - Paparkan: Kedudukan (Rank), Ticker Saham, Nama Syarikat, Harga ($), Peratusan Perubahan (+/-), Jumlah Volum Dagangan, dan nama bursa (NasdaqGS / NasdaqCM / NYSE).
+- **Format Jawapan**:
+  - DILARANG guna simbol bintang (`*`).
+  - Gunakan emoji kemas (📊, 🏛, 💰, 📦, 🟢, 🔴, ⚪, ☪️, 💡).
+  - Berikan panduan bahawa pengguna boleh terus menaip nama mana-mana kaunter untuk melihat analisis carta teknikal.
+  - Wajib sertakan penafian risiko kewangan di bahagian bawah.
+
