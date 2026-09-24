@@ -4,12 +4,18 @@ Menjalankan bot terus dari komputer / Antigravity IDE tanpa perlukan server atau
 """
 
 import asyncio
+import io
 import logging
 import os
+import sys
 import httpx
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # ── Load Environment Variables ────────────────────────────────────────────────
 load_dotenv()
@@ -29,6 +35,7 @@ logger = logging.getLogger("tg-ai-bot-local")
 gemini = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 GEMINI_MODELS = [
+    "gemini-3-flash-preview",
     "gemini-3.6-flash",
     "gemini-3.5-flash-lite",
     "gemini-flash-latest",

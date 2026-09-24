@@ -40,16 +40,13 @@ gemini = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 # Ordered best→fallback. Auto-switches on quota (429/ResourceExhausted).
 # RPM from your account:  Lite models = 15 RPM,  Flash = 5 RPM
 GEMINI_MODELS = [
-    "gemini-3.8-flash",       # Best / latest — try first (5 RPM)
-    "gemini-3.7-flash",       # (5 RPM)
-    "gemini-3.6-flash",       # (5 RPM)
-    "gemini-3.5-flash",       # (5 RPM)
-    "gemini-3.5-flash-lite",  # High quota fallback (15 RPM)
-    "gemini-3.1-flash-lite",  # High quota fallback (15 RPM)
-    "gemini-3.1-flash",       # (5 RPM)
-    "gemini-3-flash",         # (5 RPM)
-    "gemini-2.5-flash",       # (5 RPM)
-    "gemini-2.5-flash-lite",  # Last resort (10 RPM)
+    "gemini-3-flash-preview",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
 ]
 
 SYSTEM_PROMPT = """You are a smart AI trading assistant connected to TradingView.
