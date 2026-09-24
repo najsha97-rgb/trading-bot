@@ -55,6 +55,19 @@ ARAHAN FORMAT PENTING:
 4. Terangkan dengan Bahasa Melayu yang ringkas, tepat, padat, dan mudah difahami.
 5. Nyatakan aras sokongan (Support), aras rintangan (Resistance), dan pesanan kawalan risiko."""
 
+def load_brain_prompt() -> str:
+    """Muat naik arahan AI secara dinamik daripada fail brain.md jika wujud."""
+    brain_path = os.path.join(os.path.dirname(__file__), "brain.md")
+    if os.path.exists(brain_path):
+        try:
+            with open(brain_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except Exception as e:
+            logger.warning("Gagal membaca brain.md: %s", e)
+    return SYSTEM_PROMPT
+
 conversations: dict[str, list] = {}
 
 
@@ -198,7 +211,7 @@ async def ask_gemini(chat_id: str, user_message: str, context: str = "") -> str:
                 model=model,
                 contents=history,
                 config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
+                    system_instruction=load_brain_prompt(),
                     temperature=0.7,
                     max_output_tokens=1024,
                 ),

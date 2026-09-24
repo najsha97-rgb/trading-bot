@@ -153,7 +153,22 @@ def get_tradingview_ta(raw_symbol: str, interval_key: str = "1h") -> dict | None
     return None
 
 
-# ── Gemini Helper (REST API) ──────────────────────────────────────────────────
+def load_brain_prompt() -> str:
+    """Muat naik arahan AI secara dinamik daripada fail brain.md jika wujud."""
+    brain_path = os.path.join(os.path.dirname(__file__), "brain.md")
+    if os.path.exists(brain_path):
+        try:
+            with open(brain_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except Exception as e:
+            app.logger.warning("Gagal membaca brain.md: %s", e)
+    return (
+        "Anda adalah pembantu analisis crypto profesional. "
+        "DILARANG guna simbol bintang (*). Gunakan ikon (🔹, 📈, 📉, 💡, 🛡️) untuk poin. "
+        "Gunakan Bahasa Melayu yang ringkas dan padat."
+    )
 
 def call_gemini(prompt: str, system_prompt: str = "") -> str:
     """Call Gemini REST API directly using requests (PythonAnywhere compatible)."""
@@ -164,11 +179,7 @@ def call_gemini(prompt: str, system_prompt: str = "") -> str:
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
     }
-    sys_instruction = system_prompt or (
-        "Anda adalah pembantu analisis crypto profesional. "
-        "DILARANG guna simbol bintang (*). Gunakan ikon (🔹, 📈, 📉, 💡, 🛡️) untuk poin. "
-        "Gunakan Bahasa Melayu yang ringkas dan padat."
-    )
+    sys_instruction = system_prompt or load_brain_prompt()
     body["systemInstruction"] = {"parts": [{"text": sys_instruction}]}
 
     try:
