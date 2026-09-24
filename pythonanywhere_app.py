@@ -45,7 +45,13 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 GEMINI_API_KEY     = os.environ.get("GEMINI_API_KEY", "")
 
-GEMINI_MODEL = "gemini-3-flash-preview"
+GEMINI_MODELS = [
+    "gemini-3-flash-preview",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.5-flash",
+]
 
 
 # ── Text Cleaner ──────────────────────────────────────────────────────────────
@@ -411,30 +417,33 @@ def load_brain_prompt() -> str:
     )
 
 def call_gemini(prompt: str, system_prompt: str = "") -> str:
-    """Call Gemini REST API directly using requests (PythonAnywhere compatible)."""
+    """Call Gemini REST API directly with automatic model failover / swap."""
     if not GEMINI_API_KEY:
         return ""
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    sys_instruction = system_prompt or load_brain_prompt()
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
+        "systemInstruction": {"parts": [{"text": sys_instruction}]},
     }
-    sys_instruction = system_prompt or load_brain_prompt()
-    body["systemInstruction"] = {"parts": [{"text": sys_instruction}]}
 
-    try:
-        r = requests.post(url, json=body, timeout=15)
-        if r.status_code == 200:
-            res_data = r.json()
-            candidates = res_data.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts:
-                    return format_clean_telegram(parts[0].get("text", "").strip())
-        else:
-            app.logger.warning("Gemini API error: %s - %s", r.status_code, r.text[:120])
-    except Exception as e:
-        app.logger.error("Error calling Gemini: %s", e)
+    for model in GEMINI_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        try:
+            r = requests.post(url, json=body, timeout=12)
+            if r.status_code == 200:
+                res_data = r.json()
+                candidates = res_data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return format_clean_telegram(parts[0].get("text", "").strip())
+            else:
+                app.logger.warning("Model %s ralat (%s): %s", model, r.status_code, r.text[:80])
+                continue
+        except Exception as e:
+            app.logger.warning("Model %s exception: %s", model, e)
+            continue
 
     return ""
 
