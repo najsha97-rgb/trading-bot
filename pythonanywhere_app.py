@@ -307,51 +307,46 @@ def telegram_webhook():
         if not text:
             return "OK", 200
 
+        clean_lower = text.lower().strip()
+
+        # 0. Start & Help
         if text.startswith("/start"):
             send_telegram(
                 "👋 <b>Selamat Datang ke AI Trading Assistant!</b>\n"
-                "Disambungkan terus ke data langsung TradingView.\n"
+                "Disambungkan terus ke TradingView untuk Kripto, Saham Bursa Malaysia & Global (NASDAQ/NYSE).\n"
                 "────────────────────────\n\n"
-                "📌 <b>Arahan Pantas:</b>\n"
-                "🔹 <code>/status BTC</code> — Semak status teknikal semasa\n"
-                "🔹 <code>/status SOL 4h</code> — Semak status timeframe 4 jam\n"
-                "🔹 <code>/indicator</code> — Panduan masukkan indikator TradingView\n"
-                "🔹 <code>/strategy</code> — Panduan setup alert strategi ke Telegram\n"
-                "🔹 <code>/clear</code> — Kosongkan ingatan perbualan\n\n"
-                "💬 Anda juga boleh bertanya soalan pasaran terus!",
+                "💡 <b>Paling Mudah:</b> Anda <b>TIDAK PERLU</b> taip simbol '/' langsung! Boleh taip nama saham atau tanya soalan macam biasa.\n\n"
+                "📌 <b>Contoh Taip Terus (Tanpa '/'):</b>\n"
+                "🔹 <code>btc</code> atau <code>sol 4h</code> — Analisis Kripto\n"
+                "🔹 <code>maybank</code> atau <code>cimb</code> — Saham Bursa Malaysia\n"
+                "🔹 <code>nvda</code> atau <code>tsla 1d</code> — Saham US / NASDAQ\n"
+                "🔹 <code>usdmyr</code> — Pasaran Forex\n"
+                "🔹 <i>'tengok harga maybank'</i> — Analisis automatik\n"
+                "🔹 <i>'panduan indikator'</i> — Cara pasang RSI & EMA\n"
+                "🔹 <i>'setup alert'</i> — Cara sambung webhook TradingView\n\n"
+                "🤖 Boleh juga gunakan arahan biasa:\n"
+                "🔹 <code>/status BTC</code> | <code>/indicator</code> | <code>/strategy</code>",
                 chat_id=chat_id,
             )
-        elif text.startswith("/status") or text.startswith("/ta"):
-            parts = text.split()
-            sym = parts[1] if len(parts) > 1 else "BTC"
-            tf = parts[2] if len(parts) > 2 else "1h"
-            ta = get_tradingview_ta(sym, tf)
-            if ta:
-                rec = ta["recommendation"]
-                badge = "🟢 BUY" if "BUY" in rec else ("🔴 SELL" if "SELL" in rec else "⚪ NEUTRAL")
-                p_str = f"${ta['price']:,.2f}" if isinstance(ta['price'], (int, float)) else str(ta['price'])
-                ai_text = call_gemini(
-                    f"TradingView data for {ta['symbol']}: Price {p_str}, RSI {ta['rsi']}, Signal {rec}, EMA20 {ta['ema20']}, EMA50 {ta['ema50']}. Ulas dalam 3 baris ringkas tanpa simbol bintang."
-                )
-                msg = (
-                    f"📊 <b>ANALISIS PASARAN: {ta['symbol']}</b>\n"
-                    f"⏱ Timeframe: <code>{ta['interval']}</code>\n"
-                    f"────────────────────────\n"
-                    f"💰 <b>Harga Semasa:</b> <code>{p_str}</code>\n"
-                    f"🎯 <b>Isyarat:</b> <b>{badge}</b>\n"
-                    f"📈 <b>Skor Indikator:</b> 🟢 {ta['buy']} Beli | ⚪ {ta['neutral']} Neutral | 🔴 {ta['sell']} Jual\n\n"
-                    f"📋 <b>Indikator Utama:</b>\n"
-                    f"🔹 <b>RSI (14):</b> <code>{ta['rsi']}</code>\n"
-                    f"🔹 <b>MACD:</b> <code>{ta['macd']}</code>\n"
-                    f"🔹 <b>EMA 20:</b> <code>${ta['ema20']:,.2f}</code>\n"
-                    f"🔹 <b>EMA 50:</b> <code>${ta['ema50']:,.2f}</code>\n\n"
-                    f"💡 <b>Ulasan AI:</b>\n{ai_text}"
-                )
-                send_telegram(msg, chat_id=chat_id)
-            else:
-                send_telegram(f"❌ Tidak dapat mengambil data TradingView untuk {sym}.", chat_id=chat_id)
+            return "OK", 200
 
-        elif text.startswith("/indicator") or text.startswith("/indikator"):
+        if text.startswith("/help") or clean_lower in ["help", "bantuan", "menu", "arahan"]:
+            send_telegram(
+                "🤖 <b>Panduan Penggunaan Bot:</b>\n"
+                "────────────────────────\n"
+                "💡 <i>Tip: Anda boleh taip terus tanpa simbol '/'!</i>\n\n"
+                "🔹 <b>Carian Ticker Pantas:</b> Taip <code>btc</code>, <code>maybank</code>, <code>nvda</code>, atau <code>sol 4h</code>\n"
+                "🔹 <b>Panduan Indikator:</b> Taip <i>'indikator'</i> atau <code>/indicator</code>\n"
+                "🔹 <b>Setup Alert:</b> Taip <i>'alert'</i>, <i>'strategi'</i> atau <code>/strategy</code>\n"
+                "🔹 <b>Tanya Soalan Terbuka:</b> Taip apa sahaja seperti <i>'adakah bagus beli btc sekarang?'</i>",
+                chat_id=chat_id,
+            )
+            return "OK", 200
+
+        # 1. Panduan Indikator
+        if text.startswith("/indicator") or text.startswith("/indikator") or clean_lower in ["indikator", "indicator"] or any(k in clean_lower for k in [
+            "masuk indikator", "pasang indikator", "cara indikator", "panduan indikator", "setting rsi", "setting ema", "guna indikator"
+        ]):
             guide = (
                 "🛠 <b>PANDUAN MEMASUKKAN INDIKATOR DI TRADINGVIEW</b>\n"
                 "────────────────────────\n\n"
@@ -369,19 +364,22 @@ def telegram_webhook():
                 "▫️ Strategi: EMA 20 silang ke atas EMA 50 menandakan permulaan trend kenaikan.\n\n"
                 "🔹 <b>MACD (Moving Average Convergence Divergence)</b>\n"
                 "▫️ Mengesan momentum pasaran dan titik perubahan arah harga.\n\n"
-                "👉 Taip <code>/strategy</code> untuk melihat cara memasang alert webhook ke Telegram!"
+                "👉 Taip <i>'strategi'</i> untuk melihat cara memasang alert webhook ke Telegram!"
             )
             send_telegram(guide, chat_id=chat_id)
+            return "OK", 200
 
-        elif text.startswith("/strategy") or text.startswith("/strategi"):
+        # 2. Panduan Strategi & Alert
+        if text.startswith("/strategy") or text.startswith("/strategi") or clean_lower in ["strategi", "strategy", "alert", "webhook"] or any(k in clean_lower for k in [
+            "cara buat alert", "pasang alert", "setup alert", "buat webhook", "sambung webhook", "panduan strategi"
+        ]):
             guide = (
                 "📈 <b>PANDUAN SETUP STRATEGI & ALERT WEBHOOK</b>\n"
                 "────────────────────────\n\n"
                 "1️⃣ <b>Cipta Alert Baharu</b>\n"
                 "Di carta TradingView, klik ikon jam loceng ⏰ atau tekan <b>Alt + A</b>.\n\n"
                 "2️⃣ <b>Tetapan Webhook URL</b>\n"
-                "Buka tab <b>Notifications</b>, tandakan <b>Webhook URL</b> dan masukkan:\n"
-                "<code>https://NAMA_USER.pythonanywhere.com/tradingview</code>\n\n"
+                "Buka tab <b>Notifications</b>, tandakan <b>Webhook URL</b> dan masukkan URL webhook anda.\n\n"
                 "3️⃣ <b>Format Mesej Alert</b>\n"
                 "Buka tab <b>Settings</b>, masukkan kod JSON ini ke dalam kotak <b>Message</b>:\n\n"
                 "<code>{\n"
@@ -395,22 +393,129 @@ def telegram_webhook():
                 "Klik butang <b>Create</b>. Bot akan menghantar notifikasi kemas ke Telegram setiap kali alert berbunyi."
             )
             send_telegram(guide, chat_id=chat_id)
+            return "OK", 200
 
-        elif text == "/ping":
-            send_telegram("🏓 Pong! Webhook aktif.", chat_id=chat_id)
-        else:
-            match = re.search(r'\b(btc|eth|sol|xrp|doge|ada|bnb|avax|link|near|sui|pepe|bitcoin|ethereum|solana)\b', text, re.IGNORECASE)
-            context = ""
-            if match and any(k in text.lower() for k in ["status", "harga", "price", "analis", "analisis", "signal", "trend", "tengok"]):
-                ta = get_tradingview_ta(match.group(1), "1h")
-                if ta:
-                    context = (
-                        f"TradingView Technical Data for {ta['symbol']}:\n"
-                        f"Harga: ${ta['price']}, Isyarat: {ta['recommendation']} "
-                        f"(Buy:{ta['buy']}, Sell:{ta['sell']}, Neutral:{ta['neutral']}), "
-                        f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {ta['ema20']}, EMA50: {ta['ema50']}."
-                    )
-            prompt = f"Data Pasaran:\n{context}\n\nSoalan: {text}" if context else text
+        if text == "/ping" or clean_lower in ["ping", "test"]:
+            send_telegram("🏓 Pong! Webhook aktif dengan sambungan TradingView pelbagai pasaran.", chat_id=chat_id)
+            return "OK", 200
+
+        # Helper to send structured TA card
+        def send_ta_card(ta_data):
+            rec = ta_data["recommendation"]
+            if "STRONG_BUY" in rec:
+                badge = "🟢🔥 <b>STRONG BUY</b>"
+            elif "BUY" in rec:
+                badge = "🟢 <b>BUY</b>"
+            elif "STRONG_SELL" in rec:
+                badge = "🔴🔥 <b>STRONG SELL</b>"
+            elif "SELL" in rec:
+                badge = "🔴 <b>SELL</b>"
+            else:
+                badge = "⚪ <b>NEUTRAL</b>"
+
+            curr = ta_data["currency"]
+            price_str = f"{curr}{ta_data['price']:,.2f}" if curr else f"{ta_data['price']:,.4f}"
+            rsi_str = f"{ta_data['rsi']}"
+            if ta_data['rsi'] >= 70:
+                rsi_str += " ⚠️ Overbought"
+            elif ta_data['rsi'] <= 30:
+                rsi_str += " 💡 Oversold"
+
+            ai_text = call_gemini(
+                f"TradingView data for {ta_data['symbol']} ({ta_data['market']}): Price {price_str}, RSI {ta_data['rsi']}, Signal {rec}, EMA20 {ta_data['ema20']}, EMA50 {ta_data['ema50']}. Ulas dalam 3 baris ringkas tanpa simbol bintang."
+            )
+            msg = (
+                f"📊 <b>ANALISIS PASARAN: {ta_data['symbol']}</b>\n"
+                f"🏛 Pasaran: <b>{ta_data['market']}</b> ({ta_data['exchange']})\n"
+                f"⏱ Timeframe: <code>{ta_data['interval']}</code>\n"
+                f"────────────────────────\n"
+                f"💰 <b>Harga Semasa:</b> <code>{price_str}</code>\n"
+                f"🎯 <b>Isyarat:</b> {badge}\n"
+                f"📈 <b>Skor Indikator:</b> 🟢 {ta_data['buy']} Beli | ⚪ {ta_data['neutral']} Neutral | 🔴 {ta_data['sell']} Jual\n\n"
+                f"📋 <b>Indikator Utama:</b>\n"
+                f"🔹 <b>RSI (14):</b> <code>{rsi_str}</code>\n"
+                f"🔹 <b>MACD:</b> <code>{ta_data['macd']}</code>\n"
+                f"🔹 <b>EMA 20:</b> <code>{curr}{ta_data['ema20']:,.2f}</code>\n"
+                f"🔹 <b>EMA 50:</b> <code>{curr}{ta_data['ema50']:,.2f}</code>\n"
+                f"🔹 <b>EMA 200:</b> <code>{curr}{ta_data['ema200']:,.2f}</code>\n\n"
+                f"💡 <b>Ulasan AI:</b>\n{ai_text}\n\n"
+                f"🌐 <a href=\"{ta_data['chart_url']}\">Buka Carta di TradingView</a>"
+            )
+            send_telegram(msg, chat_id=chat_id)
+
+        # 3. Arahan Standard /status atau /ta
+        if text.startswith("/status") or text.startswith("/ta") or text.startswith("/analisa"):
+            parts = text.split()
+            sym = parts[1] if len(parts) > 1 else "BTC"
+            tf = parts[2] if len(parts) > 2 else "1h"
+            ta = get_tradingview_ta(sym, tf)
+            if ta:
+                send_ta_card(ta)
+            else:
+                send_telegram(f"❌ Simbol tidak ditemui di TradingView: <code>{sym}</code>", chat_id=chat_id)
+            return "OK", 200
+
+        # 4. Semakan Ticker Pantas Tanpa '/' (Contoh: 'btc', 'maybank', 'sol 4h', 'nvda')
+        status_handled = False
+        parts = text.split()
+        if len(parts) in [1, 2]:
+            cand_sym = parts[0]
+            cand_tf = parts[1] if len(parts) == 2 and parts[1].lower() in INTERVAL_MAP else "1h"
+            ta = get_tradingview_ta(cand_sym, cand_tf)
+            if ta:
+                send_ta_card(ta)
+                status_handled = True
+
+        # 5. Soalan Status / Analisis dalam Bahasa Biasa (Contoh: 'apa status cimb', 'tengok harga tesla')
+        if not status_handled and any(k in clean_lower for k in [
+            "status", "harga", "price", "analis", "analisis", "analisa", "trend",
+            "tengok", "check", "semak", "macam mana", "bagaimana", "view"
+        ]):
+            words = re.findall(r'[A-Za-z0-9]+', text)
+            timeframe = "1h"
+            for w in words:
+                if w.lower() in INTERVAL_MAP:
+                    timeframe = w.lower()
+                    break
+            stopwords = {
+                "STATUS", "HARGA", "PRICE", "TREND", "DAN", "SAYA", "KAU", "INI",
+                "ITU", "HARI", "MACAM", "MANA", "TAK", "TENGOK", "BAGAIMANA", "DI",
+                "KE", "DARI", "UNTUK", "TENTANG", "NAK", "CHECK", "ANALISIS",
+                "ANALISA", "VIEW", "PASARAN", "BOLEH", "TOLONG", "BERIKAN", "SEMAK",
+                "APA", "APAKAH", "BERAPA"
+            }
+            for w in words:
+                if len(w) >= 2 and w.upper() not in stopwords:
+                    ta = get_tradingview_ta(w, timeframe)
+                    if ta:
+                        send_ta_card(ta)
+                        status_handled = True
+                        break
+
+        # 6. Soalan Terbuka Umum
+        if not status_handled:
+            context_ta = ""
+            words = re.findall(r'[A-Za-z0-9]+', text)
+            common_words = {
+                "APA", "ADA", "ADAKAH", "BAGUS", "BOLEH", "BELI", "JUAL", "SEKARANG",
+                "HARI", "INI", "NAK", "UNTUK", "SAYA", "KAU", "MACAM", "MANA", "KENAPA",
+                "CARA", "KALAU", "JIKA", "TAK", "PATUT", "HOLD"
+            }
+            for w in words:
+                if len(w) >= 2 and w.upper() not in common_words:
+                    ta_cand = get_tradingview_ta(w, "1h")
+                    if ta_cand:
+                        curr = ta_cand["currency"]
+                        p_s = f"{curr}{ta_cand['price']:,.2f}" if curr else str(ta_cand['price'])
+                        context_ta = (
+                            f"Data Pasaran TradingView Semasa untuk {ta_cand['symbol']} ({ta_cand['market']}):\n"
+                            f"Harga: {p_s}, Isyarat Teknikal: {ta_cand['recommendation']}, "
+                            f"RSI(14): {ta_cand['rsi']}, MACD: {ta_cand['macd']}, "
+                            f"EMA20: {ta_cand['ema20']}, EMA50: {ta_cand['ema50']}."
+                        )
+                        break
+
+            prompt = f"Data Pasaran:\n{context_ta}\n\nSoalan: {text}" if context_ta else text
             ai_reply = call_gemini(prompt)
             send_telegram(ai_reply or "Maaf, tiada respon dijana.", chat_id=chat_id)
 

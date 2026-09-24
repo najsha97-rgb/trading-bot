@@ -399,19 +399,19 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
     if command == "/start":
         await send_message(client, chat_id,
             "👋 <b>Selamat Datang ke AI Trading Assistant!</b>\n"
-            "Disambungkan ke TradingView untuk Kripto, Saham Bursa Malaysia & NASDAQ.\n"
+            "Disambungkan terus ke TradingView untuk Kripto, Saham Bursa Malaysia & Global (NASDAQ/NYSE).\n"
             "────────────────────────\n\n"
-            "📌 <b>Contoh Carian Pelbagai Pasaran:</b>\n"
-            "🔹 <code>/status BTC</code> — Kripto Bitcoin\n"
-            "🔹 <code>/status MAYBANK</code> — Saham Bursa Malaysia\n"
-            "🔹 <code>/status NVDA 1d</code> — Saham NASDAQ (Nvidia)\n"
-            "🔹 <code>/status USDMYR</code> — Kadar Tukaran Forex\n\n"
-            "🛠 <b>Panduan:</b>\n"
-            "🔹 <code>/indicator</code> — Panduan masukkan indikator\n"
-            "🔹 <code>/strategy</code> — Panduan setup alert webhook\n"
-            "🔹 <code>/clear</code> — Kosongkan ingatan perbualan\n\n"
-            "💬 Anda juga boleh menaip soalan biasa seperti:\n"
-            "<i>'Bagaimana status Maybank?'</i> atau <i>'Trend Tesla hari ini'</i>"
+            "💡 <b>Paling Mudah:</b> Anda <b>TIDAK PERLU</b> taip simbol '/' langsung! Boleh taip nama saham atau tanya soalan macam biasa.\n\n"
+            "📌 <b>Contoh Taip Terus (Tanpa '/'):</b>\n"
+            "🔹 <code>btc</code> atau <code>sol 4h</code> — Analisis Kripto\n"
+            "🔹 <code>maybank</code> atau <code>cimb</code> — Saham Bursa Malaysia\n"
+            "🔹 <code>nvda</code> atau <code>tsla 1d</code> — Saham US / NASDAQ\n"
+            "🔹 <code>usdmyr</code> — Pasaran Mata Wang / Forex\n"
+            "🔹 <i>'tengok harga maybank'</i> — Analisis automatik\n"
+            "🔹 <i>'panduan indikator'</i> — Cara pasang RSI & EMA\n"
+            "🔹 <i>'setup alert'</i> — Cara sambung webhook TradingView\n\n"
+            "🤖 Boleh juga gunakan arahan standard:\n"
+            "🔹 <code>/status BTC</code> | <code>/indicator</code> | <code>/strategy</code> | <code>/clear</code>"
         )
     elif command in ["/status", "/ta", "/analisa"]:
         await handle_status_command(client, chat_id, args)
@@ -421,13 +421,14 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
         await send_message(client, chat_id, get_strategy_guide())
     elif command == "/help":
         await send_message(client, chat_id,
-            "🤖 <b>Senarai Arahan Tersedia:</b>\n"
+            "🤖 <b>Panduan Penggunaan Bot:</b>\n"
             "────────────────────────\n"
-            "🔹 <code>/status &lt;simbol&gt; [tf]</code> — Analisis teknikal live (Kripto, Bursa, US, Forex)\n"
-            "🔹 <code>/indicator</code> — Panduan indikator TradingView\n"
-            "🔹 <code>/strategy</code> — Panduan alert strategi webhook\n"
-            "🔹 <code>/clear</code> — Kosongkan ingatan perbualan\n"
-            "🔹 <code>/ping</code> — Semak status bot"
+            "💡 <i>Tip: Anda boleh taip terus tanpa simbol '/'!</i>\n\n"
+            "🔹 <b>Carian Ticker Pantas:</b> Taip <code>btc</code>, <code>maybank</code>, <code>nvda</code>, atau <code>sol 4h</code>\n"
+            "🔹 <b>Panduan Indikator:</b> Taip <i>'indikator'</i> atau <code>/indicator</code>\n"
+            "🔹 <b>Setup Alert:</b> Taip <i>'alert'</i>, <i>'strategi'</i> atau <code>/strategy</code>\n"
+            "🔹 <b>Kosongkan Memori AI:</b> Taip <i>'clear'</i> atau <code>/clear</code>\n"
+            "🔹 <b>Tanya Soalan Terbuka:</b> Taip apa sahaja seperti <i>'adakah bagus beli btc sekarang?'</i>"
         )
     elif command == "/clear":
         conversations.pop(chat_id, None)
@@ -435,7 +436,7 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
     elif command == "/ping":
         await send_message(client, chat_id, "🏓 Pong! Bot aktif dengan sambungan TradingView pelbagai pasaran.")
     else:
-        await send_message(client, chat_id, f"❓ Arahan tidak dikenali: {command}\nTaip /help untuk senarai arahan.")
+        await send_message(client, chat_id, f"❓ Arahan tidak dikenali: {command}\nTaip /help untuk panduan penggunaan.")
 
 
 # ── Main Polling Loop ──────────────────────────────────────────────────────────
@@ -478,30 +479,103 @@ async def main():
                     print(f"Mesej daripada {first_name} ({chat_id}): {text}")
                     await send_typing(client, chat_id)
 
+                    # Jika bermula dengan '/' -> Jalankan arahan standard
                     if text.startswith("/"):
                         parts = text.split()
                         cmd = parts[0].lower()
                         args = parts[1:]
                         await handle_command(client, chat_id, cmd, args)
                     else:
-                        # Extract ticker if user asks in natural language
-                        context = ""
-                        # Try to find ticker in text
-                        words = re.findall(r'[A-Za-z0-9]+', text)
-                        for word in words:
-                            if len(word) >= 2 and word.upper() not in ["APA", "BILA", "CARA", "BOLEH", "STATUS", "HARGA", "PRICE", "TREND", "DAN", "SAYA", "KAU", "INI", "ITU", "HARI"]:
-                                ta = get_tradingview_ta(word, "1h")
-                                if ta:
-                                    context = (
-                                        f"TradingView Technical Data for {ta['symbol']} ({ta['market']} - {ta['exchange']}):\n"
-                                        f"Harga: {ta['currency']}{ta['price']}, Isyarat: {ta['recommendation']} "
-                                        f"(Buy:{ta['buy']}, Sell:{ta['sell']}, Neutral:{ta['neutral']}), "
-                                        f"RSI(14): {ta['rsi']}, MACD: {ta['macd']}, EMA20: {ta['ema20']}, EMA50: {ta['ema50']}."
-                                    )
-                                    break
+                        # PROSES SOALAN BIASA TANPA FORMAT '/'
+                        clean_lower = text.lower().strip()
 
-                        reply = await ask_gemini(chat_id, text, context=context)
-                        await send_message(client, chat_id, reply)
+                        # 0. Menu Pantas (Help, Clear, Ping)
+                        if clean_lower in ["help", "bantuan", "menu", "arahan"]:
+                            await handle_command(client, chat_id, "/help", [])
+                            continue
+                        if clean_lower in ["clear", "reset", "padam"]:
+                            await handle_command(client, chat_id, "/clear", [])
+                            continue
+                        if clean_lower in ["ping", "test"]:
+                            await handle_command(client, chat_id, "/ping", [])
+                            continue
+
+                        # 1. Panduan Indikator secara bahasa biasa
+                        if clean_lower in ["indikator", "indicator"] or any(k in clean_lower for k in [
+                            "masuk indikator", "pasang indikator", "cara indikator", "panduan indikator",
+                            "setting rsi", "setting ema", "guna indikator"
+                        ]):
+                            await send_message(client, chat_id, get_indicator_guide())
+                            continue
+
+                        # 2. Panduan Strategi & Alert secara bahasa biasa
+                        if clean_lower in ["strategi", "strategy", "alert", "webhook"] or any(k in clean_lower for k in [
+                            "cara buat alert", "pasang alert", "setup alert", "buat webhook",
+                            "sambung webhook", "panduan strategi"
+                        ]):
+                            await send_message(client, chat_id, get_strategy_guide())
+                            continue
+
+                        # 3. Semakan Ticker Pantas (Contoh: 'btc', 'maybank', 'sol 4h', 'nvda', 'tsla 1d')
+                        status_handled = False
+                        parts = text.split()
+                        if len(parts) in [1, 2]:
+                            cand_sym = parts[0]
+                            cand_tf = parts[1] if len(parts) == 2 and parts[1].lower() in INTERVAL_MAP else "1h"
+                            if get_tradingview_ta(cand_sym, cand_tf):
+                                await handle_status_command(client, chat_id, [cand_sym, cand_tf])
+                                status_handled = True
+
+                        # 4. Soalan Status / Analisis dalam Bahasa Biasa (Contoh: 'apa status cimb', 'tengok harga tesla', 'analisa btc')
+                        if not status_handled and any(k in clean_lower for k in [
+                            "status", "harga", "price", "analis", "analisis", "analisa", "trend",
+                            "tengok", "check", "semak", "macam mana", "bagaimana", "view"
+                        ]):
+                            words = re.findall(r'[A-Za-z0-9]+', text)
+                            timeframe = "1h"
+                            for w in words:
+                                if w.lower() in INTERVAL_MAP:
+                                    timeframe = w.lower()
+                                    break
+                            stopwords = {
+                                "STATUS", "HARGA", "PRICE", "TREND", "DAN", "SAYA", "KAU", "INI",
+                                "ITU", "HARI", "MACAM", "MANA", "TAK", "TENGOK", "BAGAIMANA", "DI",
+                                "KE", "DARI", "UNTUK", "TENTANG", "NAK", "CHECK", "ANALISIS",
+                                "ANALISA", "VIEW", "PASARAN", "BOLEH", "TOLONG", "BERIKAN", "SEMAK",
+                                "APA", "APAKAH", "BERAPA"
+                            }
+                            for w in words:
+                                if len(w) >= 2 and w.upper() not in stopwords:
+                                    if get_tradingview_ta(w, timeframe):
+                                        await handle_status_command(client, chat_id, [w, timeframe])
+                                        status_handled = True
+                                        break
+
+                        # 5. Soalan Terbuka Umum (Serta auto-suntik data TradingView jika nama aset disebut)
+                        if not status_handled:
+                            context_ta = ""
+                            words = re.findall(r'[A-Za-z0-9]+', text)
+                            common_words = {
+                                "APA", "ADA", "ADAKAH", "BAGUS", "BOLEH", "BELI", "JUAL", "SEKARANG",
+                                "HARI", "INI", "NAK", "UNTUK", "SAYA", "KAU", "MACAM", "MANA", "KENAPA",
+                                "CARA", "KALAU", "JIKA", "TAK", "PATUT", "HOLD"
+                            }
+                            for w in words:
+                                if len(w) >= 2 and w.upper() not in common_words:
+                                    ta_cand = get_tradingview_ta(w, "1h")
+                                    if ta_cand:
+                                        curr = ta_cand["currency"]
+                                        p_s = f"{curr}{ta_cand['price']:,.2f}" if curr else str(ta_cand['price'])
+                                        context_ta = (
+                                            f"Data Pasaran TradingView Semasa untuk {ta_cand['symbol']} ({ta_cand['market']}):\n"
+                                            f"Harga: {p_s}, Isyarat Teknikal: {ta_cand['recommendation']}, "
+                                            f"RSI(14): {ta_cand['rsi']}, MACD: {ta_cand['macd']}, "
+                                            f"EMA20: {ta_cand['ema20']}, EMA50: {ta_cand['ema50']}."
+                                        )
+                                        break
+
+                            reply = await ask_gemini(chat_id, text, context=context_ta)
+                            await send_message(client, chat_id, reply)
 
             except asyncio.CancelledError:
                 break
