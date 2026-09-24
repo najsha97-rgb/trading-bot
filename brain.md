@@ -96,18 +96,20 @@ Jika pengguna bertanya soalan konsep, indikator, atau strategi:
      - Sumber rujukan: `https://edition.cnn.com/markets/fear-and-greed` (Data API: `https://production.dataviz.cnn.io/index/fearandgreed/graphdata`).
      - Paparkan: Skor semasa (cth: `36/100`), Label Emosi (cth: `FEAR`), tolok bar visual, serta perbandingan masa lalu (*1 week ago*, *1 month ago*, *1 year ago*).
   2. **Crypto (CoinMarketCap Fear & Greed Index)**:
-     - Sumber rujukan: `https://coinmarketcap.com/charts/fear-and-greed-index/` (Chart API: `https://api.coinmarketcap.com/data-api/v3/fear-greed/chart` + Web Scraper / Alternative.me fallback).
-     - Paparkan: Skor semasa (cth: `74/100`), Label Emosi (cth: `GREED`), tolok bar visual, serta rekod 1 minggu lalu (*1 week ago*).
+     - Sumber rujukan: `https://coinmarketcap.com/charts/fear-and-greed-index/` (Chart API 35 hari: `https://api.coinmarketcap.com/data-api/v3/fear-greed/chart` + Web Scraper / Alternative.me fallback).
+     - Paparkan: Skor semasa (cth: `73/100`), Label Emosi (cth: `GREED`), tolok bar visual, serta rekod sejarah: *1 week ago* dan *Last month* (cth: `1 week ago: 73 (Greed)  |  Last month: 81 (Extreme Greed)`).
   3. **Bursa Malaysia (Market Sentiment Index & Market Watch)**:
      - Sumber rujukan: `https://www.malaysiastock.biz/Market-Watch.aspx` (Market Gauge: `https://www.malaysiastock.biz/Market-Gauge-New.aspx`).
-     - Paparkan: Skor Indeks Sentimen Pasaran (cth: `30/100`), Label Emosi (cth: `FEAR`), tolok bar visual, serta ringkasan kaunter Gainer vs Loser harian.
+     - Formula Pengiraan Dinamik: Mengikut formula rasmi enjin MalaysiaStock.Biz iaitu `Math.floor(Gainer / (Gainer + Loser) * 100)` agar selaras dengan tolok langsung pelayar web (cth: 436 Gainers / (436+675) = `39/100`), bukan nilai statik `30` pada HTML mentah.
+     - Paparkan: Skor Indeks Sentimen Pasaran (cth: `39/100`), Label Emosi (cth: `FEAR`), tolok bar visual, serta statistik kaunter Gainer vs Loser harian.
 - **Format Paparan**:
-  - Bar visual 10 segmen (cth: `███░░░░░░░` untuk skor ~30, `███████░░░` untuk skor ~74).
+  - Bar visual 10 segmen (cth: `███░░░░░░░` untuk skor ~30, `████░░░░░░` untuk skor ~39, `███████░░░` untuk skor ~73).
   - Skala standard: `0 = Extreme Fear, 100 = Extreme Greed`.
   - Wajib sertakan penafian kewangan: `Not financial advice / Sentimen pasaran sahaja`.
 - **Kata Kunci & Panggilan**:
   - Perintah: `/fgi`, `/sentiment`, `/sentimen`, `/fear`, `/greed`.
   - Bahasa Biasa: `fgi`, `fear and greed`, `fear & greed`, `sentimen pasaran`, `market sentiment`, `sentimen bursa`, `sentimen crypto`, `sentimen us`.
+
 
 
 

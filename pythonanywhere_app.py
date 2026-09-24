@@ -355,7 +355,7 @@ def fetch_cnn_fgi() -> dict | None:
 def fetch_crypto_fgi() -> dict | None:
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     now = int(datetime.now().timestamp())
-    start = now - (14 * 86400)
+    start = now - (35 * 86400)
     chart_url = f"https://api.coinmarketcap.com/data-api/v3/fear-greed/chart?start={start}&end={now}"
     try:
         r = requests.get(chart_url, headers=headers, timeout=8)
@@ -365,14 +365,21 @@ def fetch_crypto_fgi() -> dict | None:
                 latest = d_list[-1]
                 score = round(int(latest.get("score", 0)))
                 rating = latest.get("name", "").upper()
-                prev_1w_item = d_list[-8] if len(d_list) >= 8 else d_list[0]
+                target_1w = now - (7 * 86400)
+                target_1m = now - (30 * 86400)
+                prev_1w_item = min(d_list, key=lambda x: abs(int(x.get("timestamp", 0)) - target_1w))
                 prev_1w_score = round(int(prev_1w_item.get("score", 0)))
-                prev_1w_rating = prev_1w_item.get("name", "").capitalize()
+                prev_1w_rating = prev_1w_item.get("name", "").title()
+                prev_1m_item = min(d_list, key=lambda x: abs(int(x.get("timestamp", 0)) - target_1m))
+                prev_1m_score = round(int(prev_1m_item.get("score", 0)))
+                prev_1m_rating = prev_1m_item.get("name", "").title()
                 return {
                     "score": score,
                     "rating": rating,
                     "prev_1w_score": prev_1w_score,
                     "prev_1w_rating": prev_1w_rating,
+                    "prev_1m_score": prev_1m_score,
+                    "prev_1m_rating": prev_1m_rating,
                 }
     except Exception as e:
         app.logger.error("Ralat fetch_crypto_fgi chart: %s", e)
@@ -389,27 +396,34 @@ def fetch_crypto_fgi() -> dict | None:
                     "score": score,
                     "rating": rating,
                     "prev_1w_score": score,
-                    "prev_1w_rating": rating.capitalize(),
+                    "prev_1w_rating": rating.title(),
+                    "prev_1m_score": None,
+                    "prev_1m_rating": None,
                 }
     except Exception as e:
         app.logger.error("Ralat fetch_crypto_fgi scrape: %s", e)
 
     # Fallback 2: Alternative.me
     try:
-        r_alt = requests.get("https://api.alternative.me/fng/?limit=8", timeout=5)
+        r_alt = requests.get("https://api.alternative.me/fng/?limit=31", timeout=5)
         if r_alt.status_code == 200:
             items = r_alt.json().get("data", [])
             if items:
                 score = int(items[0].get("value", 0))
                 rating = items[0].get("value_classification", "").upper()
-                w_item = items[-1] if len(items) >= 7 else items[0]
+                w_item = items[6] if len(items) >= 7 else items[-1]
                 w_score = int(w_item.get("value", 0))
-                w_rating = w_item.get("value_classification", "").capitalize()
+                w_rating = w_item.get("value_classification", "").title()
+                m_item = items[-1] if len(items) >= 30 else items[-1]
+                m_score = int(m_item.get("value", 0))
+                m_rating = m_item.get("value_classification", "").title()
                 return {
                     "score": score,
                     "rating": rating,
                     "prev_1w_score": w_score,
                     "prev_1w_rating": w_rating,
+                    "prev_1m_score": m_score,
+                    "prev_1m_rating": m_rating,
                 }
     except Exception as e:
         app.logger.error("Ralat fetch_crypto_fgi alt.me: %s", e)
@@ -428,18 +442,31 @@ def fetch_bursa_sentiment() -> dict | None:
             if r.status_code == 200:
                 if BeautifulSoup:
                     soup = BeautifulSoup(r.text, "html.parser")
+                    gainers_el = soup.find(id="lbIndice_GainerNo")
+                    losers_el = soup.find(id="lbIndice_LosersNo")
+                    if gainers_el and losers_el:
+                        g_txt = gainers_el.text.strip().replace(",", "")
+                        l_txt = losers_el.text.strip().replace(",", "")
+                        if g_txt.isdigit() and l_txt.isdigit():
+                            g = int(g_txt)
+                            l = int(l_txt)
+                            if (g + l) > 0:
+                                # Formula rasmi MalaysiaStock.Biz Market Sentiment: Math.floor(Gainer / (Gainer + Loser) * 100)
+                                score = int((g / (g + l)) * 100)
+                                return {
+                                    "score": score,
+                                    "rating": get_sentiment_label(score),
+                                    "gainers": f"{g:,}",
+                                    "losers": f"{l:,}",
+                                }
                     gauge_val = soup.find(id="lbGaugeIndexVal")
                     if gauge_val and gauge_val.text.strip().isdigit():
                         score = int(gauge_val.text.strip())
-                        gainers_el = soup.find(id="lbIndice_GainerNo")
-                        losers_el = soup.find(id="lbIndice_LosersNo")
-                        gainers = gainers_el.text.strip() if gainers_el else "-"
-                        losers = losers_el.text.strip() if losers_el else "-"
                         return {
                             "score": score,
                             "rating": get_sentiment_label(score),
-                            "gainers": gainers,
-                            "losers": losers,
+                            "gainers": "-",
+                            "losers": "-",
                         }
                 m = re.search(r'id=\"lbGaugeIndexVal\"[^>]*>(\d+)<', r.text)
                 if m:
@@ -475,7 +502,10 @@ def get_fear_and_greed_card() -> str:
     if cmc:
         lines.append(f"🪙 <b>CRYPTO (CoinMarketCap):</b> <code>{cmc['score']}/100</code> — <b>{cmc['rating']}</b>")
         lines.append(f"<code>{render_gauge_bar(cmc['score'])}</code>")
-        lines.append(f"<i>1 week ago: {cmc['prev_1w_score']} ({cmc['prev_1w_rating']})</i>\n")
+        history_parts = [f"1 week ago: {cmc['prev_1w_score']} ({cmc['prev_1w_rating']})"]
+        if cmc.get("prev_1m_score") is not None:
+            history_parts.append(f"Last month: {cmc['prev_1m_score']} ({cmc['prev_1m_rating']})")
+        lines.append(f"<i>{'  |  '.join(history_parts)}</i>\n")
     else:
         lines.append("🪙 <b>CRYPTO (CoinMarketCap):</b> <i>Data tidak tersedia buat masa ini.</i>\n")
 
