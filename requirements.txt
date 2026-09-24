@@ -6,3 +6,6 @@ python-dotenv
 requests
 flask
 tradingview-ta
+matplotlib
+pandas
+yfinance

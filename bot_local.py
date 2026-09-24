@@ -16,6 +16,12 @@ import os
 import re
 import sys
 import httpx
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import pandas as pd
+import requests
+import yfinance as yf
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -225,6 +231,189 @@ async def send_typing(client: httpx.AsyncClient, chat_id: int | str) -> None:
     except Exception:
         pass
 
+async def send_photo_card(client: httpx.AsyncClient, chat_id: int | str, photo_bytes: bytes, text: str) -> None:
+    """Hantar gambar carta TradingView bersama ulasan teks analisis."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    try:
+        # Telegram had caption ialah 1024 aksara
+        if len(text) <= 1024:
+            await client.post(url, data={
+                "chat_id": chat_id,
+                "caption": text,
+                "parse_mode": "HTML",
+            }, files={
+                "photo": ("chart.png", photo_bytes, "image/png")
+            }, timeout=20.0)
+        else:
+            first_line = text.split("\n")[0]
+            await client.post(url, data={
+                "chat_id": chat_id,
+                "caption": first_line,
+                "parse_mode": "HTML",
+            }, files={
+                "photo": ("chart.png", photo_bytes, "image/png")
+            }, timeout=20.0)
+            await send_message(client, chat_id, text)
+    except Exception as e:
+        logger.error("Gagal send_photo_card: %s", e)
+        await send_message(client, chat_id, text)
+
+
+# ── Chart Engine (Candlestick + EMAs) ─────────────────────────────────────────
+
+BURSA_CODE_MAP = {
+    "MAYBANK": "1155.KL",
+    "CIMB": "1023.KL",
+    "TENAGA": "5347.KL",
+    "PBBANK": "1295.KL",
+    "PUBLICBANK": "1295.KL",
+    "IHH": "5225.KL",
+    "PMETAL": "8869.KL",
+    "PRESSMETAL": "8869.KL",
+    "YTL": "4677.KL",
+    "YTLPOWR": "6742.KL",
+    "CELCOMDIGI": "6947.KL",
+    "CDB": "6947.KL",
+    "MAXIS": "6012.KL",
+    "AXIATA": "6888.KL",
+    "SIME": "4197.KL",
+    "SIMEPROP": "5288.KL",
+    "INARI": "0166.KL",
+    "SUNWAY": "5211.KL",
+    "GENTING": "3182.KL",
+    "GENM": "4715.KL",
+    "TOPGLOV": "7113.KL",
+    "TOPGLOVE": "7113.KL",
+    "HARTA": "5168.KL",
+    "HARTALEGA": "5168.KL",
+    "MISC": "3816.KL",
+    "PETDAG": "5681.KL",
+    "PETGAS": "6033.KL",
+    "PCHEM": "5183.KL",
+    "RHBBANK": "1066.KL",
+    "RHB": "1066.KL",
+    "HLBANK": "5819.KL",
+    "AMBANK": "1015.KL",
+    "GAMUDA": "5398.KL",
+    "AIRASIA": "5099.KL",
+    "CAPITALA": "5099.KL",
+    "MRDIY": "5296.KL",
+    "MYEG": "0138.KL",
+    "ECOWLD": "8206.KL",
+    "SPSETIA": "8664.KL",
+    "KPJ": "5878.KL",
+    "DIALOG": "7277.KL",
+}
+
+def generate_candlestick_chart(raw_symbol: str, interval: str = "1h", market_type: str = "") -> bytes | None:
+    """Menjana carta candlestick dark mode berkualiti tinggi sebagai gambar PNG."""
+    try:
+        sym = raw_symbol.upper().strip().replace("/", "").replace("-", "").replace("PERP", "")
+        df = None
+        curr = "$"
+
+        # 1. Saham Bursa Malaysia
+        if market_type == "Bursa Malaysia" or sym in BURSA_CODE_MAP or (len(sym) == 4 and sym.isdigit()):
+            b_sym = BURSA_CODE_MAP.get(sym, f"{sym}.KL")
+            yf_df = yf.Ticker(b_sym).history(period="1mo", interval="1d")
+            if not yf_df.empty:
+                df = yf_df.reset_index()
+                df.columns = [c.lower() for c in df.columns]
+                curr = "RM"
+
+        # 2. Kripto (Guna Binance API untuk kelajuan maksima)
+        elif "crypto" in market_type.lower() or sym.endswith("USDT") or sym in ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "AVAX", "NEAR", "SUI"]:
+            c_sym = sym if sym.endswith("USDT") else f"{sym}USDT"
+            binance_tf = interval.lower() if interval.lower() in ["1m", "5m", "15m", "1h", "4h", "1d", "1w"] else "1h"
+            try:
+                r = requests.get(
+                    f"https://api.binance.com/api/v3/klines?symbol={c_sym}&interval={binance_tf}&limit=40",
+                    timeout=5.0
+                )
+                if r.status_code == 200:
+                    raw = r.json()
+                    df = pd.DataFrame(raw, columns=[
+                        "timestamp", "open", "high", "low", "close", "volume",
+                        "close_time", "qav", "num_trades", "taker_base_vol", "taker_quote_vol", "ignore"
+                    ])
+                    for col in ["open", "high", "low", "close", "volume"]:
+                        df[col] = df[col].astype(float)
+                    df["date"] = pd.to_datetime(df["timestamp"], unit="ms")
+                    curr = "$"
+            except Exception as e:
+                logger.warning("Ralat Binance chart: %s", e)
+
+        # 3. Fallback ke yfinance (US Stocks & Forex)
+        if df is None or df.empty:
+            yf_sym = f"{sym}=X" if ("forex" in market_type.lower() or (len(sym) == 6 and any(fx in sym for fx in ["MYR", "EUR", "GBP", "USD", "JPY", "SGD"]))) else sym
+            yf_tf = "1d" if interval.lower() in ["1d", "1w"] else "1h"
+            yf_df = yf.Ticker(yf_sym).history(period="1mo", interval=yf_tf)
+            if not yf_df.empty:
+                df = yf_df.reset_index()
+                df.columns = [c.lower() for c in df.columns]
+                curr = "" if "forex" in market_type.lower() else "$"
+
+        if df is None or df.empty or len(df) < 5:
+            return None
+
+        # Ambil 35 lilin terkini
+        df = df.iloc[-35:].reset_index(drop=True)
+
+        fig, ax = plt.subplots(figsize=(10, 5), facecolor="#0B0E14")
+        ax.set_facecolor("#0B0E14")
+
+        col_up = "#089981"
+        col_down = "#F23645"
+        width = 0.6
+        x = range(len(df))
+
+        for i in x:
+            o = df.loc[i, "open"]
+            c = df.loc[i, "close"]
+            h = df.loc[i, "high"]
+            l = df.loc[i, "low"]
+            col = col_up if c >= o else col_down
+            ax.vlines(i, l, h, color=col, linewidth=1.2)
+            bottom = min(o, c)
+            height = max(abs(c - o), (h - l) * 0.03)
+            ax.bar(i, height, bottom=bottom, color=col, width=width)
+
+        # Tambah garis EMA 20 & EMA 50
+        df["ema20"] = df["close"].ewm(span=20).mean()
+        ax.plot(x, df["ema20"], color="#00F0FF", label="EMA 20", linewidth=1.5)
+        if len(df) >= 25:
+            df["ema50"] = df["close"].ewm(span=50).mean()
+            ax.plot(x, df["ema50"], color="#FFA500", label="EMA 50", linewidth=1.3)
+
+        ax.grid(True, color="#1E222D", linestyle="--", alpha=0.7)
+        ax.tick_params(colors="#848E9C")
+        for spine in ax.spines.values():
+            spine.set_color("#1E222D")
+
+        # Format label paksi X
+        step = max(1, len(df) // 6)
+        date_col = "date" if "date" in df.columns else ("datetime" if "datetime" in df.columns else df.columns[0])
+        labels = []
+        for i in range(0, len(df), step):
+            dt = pd.to_datetime(df.loc[i, date_col])
+            labels.append(dt.strftime("%d %b\n%H:%M") if interval not in ["1d", "1w"] else dt.strftime("%d %b\n%Y"))
+        ax.set_xticks(range(0, len(df), step))
+        ax.set_xticklabels(labels, color="#848E9C")
+
+        last_p = df.iloc[-1]["close"]
+        price_fmt = f"{curr}{last_p:,.2f}" if curr else (f"{last_p:,.4f}" if last_p < 1 else f"{last_p:,.2f}")
+        ax.set_title(f"{sym} ({interval}) • {price_fmt} | LangkahTrade AI", color="#E1E3E6", fontsize=12, fontweight="bold", pad=12)
+        ax.legend(facecolor="#131722", edgecolor="#2A2E39", labelcolor="#E1E3E6", loc="upper left")
+
+        buf = io.BytesIO()
+        plt.tight_layout()
+        plt.savefig(buf, format="png", dpi=120, facecolor=fig.get_facecolor(), bbox_inches="tight")
+        plt.close(fig)
+        return buf.getvalue()
+    except Exception as e:
+        logger.error("Ralat penjanaan carta untuk %s: %s", raw_symbol, e)
+        return None
+
 
 DISCLAIMER_HTML = (
     "⚠️ <i>Penafian: Maklumat dan analisis ini adalah untuk tujuan pembelajaran dan rujukan teknikal sahaja, "
@@ -361,7 +550,12 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
         f"{DISCLAIMER_HTML}"
     )
 
-    await send_message(client, chat_id, msg)
+    # Jana carta candlestick secara latar (non-blocking)
+    chart_bytes = await asyncio.to_thread(generate_candlestick_chart, ta["symbol"], ta["interval"], ta["market"])
+    if chart_bytes:
+        await send_photo_card(client, chat_id, chart_bytes, msg)
+    else:
+        await send_message(client, chat_id, msg)
 
 
 # ── Guides (Clean & Readable) ─────────────────────────────────────────────────
