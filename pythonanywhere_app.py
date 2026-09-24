@@ -21,6 +21,11 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo
 
 try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
+
+try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
@@ -302,6 +307,193 @@ def get_nasdaq_active_cards(limit: int = 50) -> list[str]:
     except Exception as e:
         app.logger.error("Ralat get_nasdaq_active_cards: %s", e)
         return [f"⚠️ Ralat memproses data kaunter aktif NASDAQ: {e}"]
+
+
+# ── Fear & Greed Index (US Stocks, Crypto, Bursa Malaysia) ────────────────────
+
+def render_gauge_bar(score: int, length: int = 10) -> str:
+    filled = max(0, min(length, round(score / 100 * length)))
+    empty = length - filled
+    return "█" * filled + "░" * empty
+
+def get_sentiment_label(score: int) -> str:
+    if score <= 20:
+        return "EXTREME FEAR"
+    elif score <= 40:
+        return "FEAR"
+    elif score <= 60:
+        return "NEUTRAL"
+    elif score <= 80:
+        return "GREED"
+    else:
+        return "EXTREME GREED"
+
+def fetch_cnn_fgi() -> dict | None:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+    try:
+        r = requests.get(url, headers=headers, timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            fng = data.get("fear_and_greed", {})
+            score = round(fng.get("score", 0))
+            rating = fng.get("rating", "").upper()
+            prev_1w = round(fng.get("previous_1_week", 0))
+            prev_1m = round(fng.get("previous_1_month", 0))
+            prev_1y = round(fng.get("previous_1_year", 0))
+            return {
+                "score": score,
+                "rating": rating,
+                "prev_1w": prev_1w,
+                "prev_1m": prev_1m,
+                "prev_1y": prev_1y,
+            }
+    except Exception as e:
+        app.logger.error("Ralat fetch_cnn_fgi: %s", e)
+    return None
+
+def fetch_crypto_fgi() -> dict | None:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    now = int(datetime.now().timestamp())
+    start = now - (14 * 86400)
+    chart_url = f"https://api.coinmarketcap.com/data-api/v3/fear-greed/chart?start={start}&end={now}"
+    try:
+        r = requests.get(chart_url, headers=headers, timeout=8)
+        if r.status_code == 200:
+            d_list = r.json().get("data", {}).get("dataList", [])
+            if d_list:
+                latest = d_list[-1]
+                score = round(int(latest.get("score", 0)))
+                rating = latest.get("name", "").upper()
+                prev_1w_item = d_list[-8] if len(d_list) >= 8 else d_list[0]
+                prev_1w_score = round(int(prev_1w_item.get("score", 0)))
+                prev_1w_rating = prev_1w_item.get("name", "").capitalize()
+                return {
+                    "score": score,
+                    "rating": rating,
+                    "prev_1w_score": prev_1w_score,
+                    "prev_1w_rating": prev_1w_rating,
+                }
+    except Exception as e:
+        app.logger.error("Ralat fetch_crypto_fgi chart: %s", e)
+
+    # Fallback 1: Scrape CMC page
+    try:
+        r_page = requests.get("https://coinmarketcap.com/charts/fear-and-greed-index/", headers=headers, timeout=8)
+        if r_page.status_code == 200:
+            m = re.search(r'\"currentIndex\":\{"score\":(\d+)[^}]*\"name\":\"([^\"]+)\"', r_page.text)
+            if m:
+                score = int(m.group(1))
+                rating = m.group(2).upper()
+                return {
+                    "score": score,
+                    "rating": rating,
+                    "prev_1w_score": score,
+                    "prev_1w_rating": rating.capitalize(),
+                }
+    except Exception as e:
+        app.logger.error("Ralat fetch_crypto_fgi scrape: %s", e)
+
+    # Fallback 2: Alternative.me
+    try:
+        r_alt = requests.get("https://api.alternative.me/fng/?limit=8", timeout=5)
+        if r_alt.status_code == 200:
+            items = r_alt.json().get("data", [])
+            if items:
+                score = int(items[0].get("value", 0))
+                rating = items[0].get("value_classification", "").upper()
+                w_item = items[-1] if len(items) >= 7 else items[0]
+                w_score = int(w_item.get("value", 0))
+                w_rating = w_item.get("value_classification", "").capitalize()
+                return {
+                    "score": score,
+                    "rating": rating,
+                    "prev_1w_score": w_score,
+                    "prev_1w_rating": w_rating,
+                }
+    except Exception as e:
+        app.logger.error("Ralat fetch_crypto_fgi alt.me: %s", e)
+
+    return None
+
+def fetch_bursa_sentiment() -> dict | None:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    urls = [
+        "https://www.malaysiastock.biz/Market-Gauge-New.aspx",
+        "https://www.malaysiastock.biz/Market-Watch.aspx",
+    ]
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, timeout=8)
+            if r.status_code == 200:
+                if BeautifulSoup:
+                    soup = BeautifulSoup(r.text, "html.parser")
+                    gauge_val = soup.find(id="lbGaugeIndexVal")
+                    if gauge_val and gauge_val.text.strip().isdigit():
+                        score = int(gauge_val.text.strip())
+                        gainers_el = soup.find(id="lbIndice_GainerNo")
+                        losers_el = soup.find(id="lbIndice_LosersNo")
+                        gainers = gainers_el.text.strip() if gainers_el else "-"
+                        losers = losers_el.text.strip() if losers_el else "-"
+                        return {
+                            "score": score,
+                            "rating": get_sentiment_label(score),
+                            "gainers": gainers,
+                            "losers": losers,
+                        }
+                m = re.search(r'id=\"lbGaugeIndexVal\"[^>]*>(\d+)<', r.text)
+                if m:
+                    score = int(m.group(1))
+                    return {
+                        "score": score,
+                        "rating": get_sentiment_label(score),
+                        "gainers": "-",
+                        "losers": "-",
+                    }
+        except Exception as e:
+            app.logger.error("Ralat fetch_bursa_sentiment: %s", e)
+    return None
+
+def get_fear_and_greed_card() -> str:
+    cnn = fetch_cnn_fgi()
+    cmc = fetch_crypto_fgi()
+    bursa = fetch_bursa_sentiment()
+
+    lines = [
+        "😱 <b>Fear & Greed Index (Sentimen Pasaran Global & Tempatan)</b>\n"
+    ]
+
+    # 1. US Stocks (CNN)
+    if cnn:
+        lines.append(f"🇺🇸 <b>US STOCKS (CNN):</b> <code>{cnn['score']}/100</code> — <b>{cnn['rating']}</b>")
+        lines.append(f"<code>{render_gauge_bar(cnn['score'])}</code>")
+        lines.append(f"<i>1 week ago: {cnn['prev_1w']}  |  1 month ago: {cnn['prev_1m']}  |  1 year ago: {cnn['prev_1y']}</i>\n")
+    else:
+        lines.append("🇺🇸 <b>US STOCKS (CNN):</b> <i>Data tidak tersedia buat masa ini.</i>\n")
+
+    # 2. Crypto (CoinMarketCap)
+    if cmc:
+        lines.append(f"🪙 <b>CRYPTO (CoinMarketCap):</b> <code>{cmc['score']}/100</code> — <b>{cmc['rating']}</b>")
+        lines.append(f"<code>{render_gauge_bar(cmc['score'])}</code>")
+        lines.append(f"<i>1 week ago: {cmc['prev_1w_score']} ({cmc['prev_1w_rating']})</i>\n")
+    else:
+        lines.append("🪙 <b>CRYPTO (CoinMarketCap):</b> <i>Data tidak tersedia buat masa ini.</i>\n")
+
+    # 3. Bursa Malaysia
+    if bursa:
+        lines.append(f"🇲🇾 <b>BURSA MALAYSIA — Market Sentiment Index:</b> <code>{bursa['score']}/100</code> — <b>{bursa['rating']}</b>")
+        lines.append(f"<code>{render_gauge_bar(bursa['score'])}</code>")
+        if bursa.get("gainers") != "-" and bursa.get("losers") != "-":
+            lines.append(f"<i>Statistik Pasaran: 🟢 Gainer {bursa['gainers']}  |  🔴 Loser {bursa['losers']}</i>\n")
+        else:
+            lines.append("")
+    else:
+        lines.append("🇲🇾 <b>BURSA MALAYSIA:</b> <i>Data sentimen tidak tersedia buat masa ini.</i>\n")
+
+    lines.append("📌 <i>0 = Extreme Fear, 100 = Extreme Greed. Not financial advice.</i>\n")
+    lines.append(DISCLAIMER_HTML)
+
+    return "\n".join(lines)
 
 
 # ── Telegram Helper ───────────────────────────────────────────────────────────
@@ -903,6 +1095,7 @@ def telegram_webhook():
                 "────────────────────────\n\n"
                 "💡 <b>Paling Mudah:</b> Anda <b>TIDAK PERLU</b> taip simbol '/' langsung! Boleh taip nama saham atau tanya soalan macam biasa.\n\n"
                 "📌 <b>Contoh Taip Terus (Tanpa '/'):</b>\n"
+                "🔹 <code>fgi</code> — Fear & Greed Index (US Stocks, Kripto & Bursa Malaysia)\n"
                 "🔹 <code>kaunter aktif bursa</code> — Top 50 Kaunter Aktif Harian (ShareInvestor 9am-5pm)\n"
                 "🔹 <code>kaunter aktif nasdaq</code> — Top 50 Saham Paling Aktif US (Yahoo Finance)\n"
                 "🔹 <code>chart xrp</code> atau <code>sol 4h</code> — Analisis Kripto & Carta Lilin\n"
@@ -912,7 +1105,7 @@ def telegram_webhook():
                 "🔹 <i>'panduan indikator'</i> — Cara pasang RSI & EMA\n"
                 "🔹 <i>'setup alert'</i> — Cara sambung webhook TradingView\n\n"
                 "🤖 Boleh juga gunakan arahan biasa:\n"
-                f"🔹 <code>/aktif bursa</code> | <code>/aktif nasdaq</code> | <code>/status BTC</code> | <code>/strategy</code>\n\n"
+                f"🔹 <code>/fgi</code> | <code>/aktif bursa</code> | <code>/aktif nasdaq</code> | <code>/status BTC</code> | <code>/strategy</code>\n\n"
                 f"{DISCLAIMER_HTML}",
                 chat_id=chat_id,
             )
@@ -923,6 +1116,7 @@ def telegram_webhook():
                 "🤖 <b>Panduan Penggunaan Bot:</b>\n"
                 "────────────────────────\n"
                 "💡 <i>Tip: Anda boleh taip terus tanpa simbol '/'!</i>\n\n"
+                "🔹 <b>Fear & Greed Index:</b> Taip <i>'fgi'</i>, <i>'sentimen'</i> atau <code>/fgi</code>\n"
                 "🔹 <b>Kaunter Aktif Bursa:</b> Taip <i>'kaunter aktif bursa'</i> atau <code>/aktif bursa</code>\n"
                 "🔹 <b>Kaunter Aktif NASDAQ:</b> Taip <i>'kaunter aktif nasdaq'</i> atau <code>/aktif nasdaq</code>\n"
                 "🔹 <b>Carian Ticker Pantas:</b> Taip <code>btc</code>, <code>maybank</code>, <code>nvda</code>, atau <code>sol 4h</code>\n"
@@ -1040,6 +1234,16 @@ def telegram_webhook():
                 send_telegram_photo(chart_bytes, msg, chat_id=chat_id)
             else:
                 send_telegram(msg, chat_id=chat_id)
+
+        # 2.4 Fear & Greed Index (Arahan /fgi & Bahasa Biasa)
+        if text.startswith("/fgi") or text.startswith("/sentiment") or text.startswith("/sentimen") or any(k in clean_lower for k in [
+            "fear and greed", "fear & greed", "fgi", "fear greed",
+            "market sentiment", "sentimen pasaran", "sentimen bursa",
+            "sentimen crypto", "sentimen kripto", "sentimen us",
+            "index sentimen", "indeks sentimen", "sentimen semasa"
+        ]):
+            send_telegram(get_fear_and_greed_card(), chat_id=chat_id)
+            return "OK", 200
 
         # 2.5 Arahan Standard /aktif atau /active
         if text.startswith("/aktif") or text.startswith("/active") or text.startswith("/top") or text.startswith("/mostactive"):

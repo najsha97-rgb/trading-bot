@@ -87,4 +87,27 @@ Jika pengguna bertanya soalan konsep, indikator, atau strategi:
   - Berikan panduan bahawa pengguna boleh terus menaip nama mana-mana kaunter untuk melihat analisis carta teknikal.
   - Wajib sertakan penafian risiko kewangan di bahagian bawah.
 
+---
+
+## 8. FEAR & GREED INDEX (FGI) & MARKET SENTIMENT
+- **Objektif**: Memberikan pandangan pantas terhadap emosi dan psikologi pasaran bagi 3 aset utama: Saham AS, Kripto, dan Bursa Malaysia.
+- **Sumber Data Rasmi**:
+  1. **US Stocks (CNN Fear & Greed Index)**:
+     - Sumber rujukan: `https://edition.cnn.com/markets/fear-and-greed` (Data API: `https://production.dataviz.cnn.io/index/fearandgreed/graphdata`).
+     - Paparkan: Skor semasa (cth: `36/100`), Label Emosi (cth: `FEAR`), tolok bar visual, serta perbandingan masa lalu (*1 week ago*, *1 month ago*, *1 year ago*).
+  2. **Crypto (CoinMarketCap Fear & Greed Index)**:
+     - Sumber rujukan: `https://coinmarketcap.com/charts/fear-and-greed-index/` (Chart API: `https://api.coinmarketcap.com/data-api/v3/fear-greed/chart` + Web Scraper / Alternative.me fallback).
+     - Paparkan: Skor semasa (cth: `74/100`), Label Emosi (cth: `GREED`), tolok bar visual, serta rekod 1 minggu lalu (*1 week ago*).
+  3. **Bursa Malaysia (Market Sentiment Index & Market Watch)**:
+     - Sumber rujukan: `https://www.malaysiastock.biz/Market-Watch.aspx` (Market Gauge: `https://www.malaysiastock.biz/Market-Gauge-New.aspx`).
+     - Paparkan: Skor Indeks Sentimen Pasaran (cth: `30/100`), Label Emosi (cth: `FEAR`), tolok bar visual, serta ringkasan kaunter Gainer vs Loser harian.
+- **Format Paparan**:
+  - Bar visual 10 segmen (cth: `███░░░░░░░` untuk skor ~30, `███████░░░` untuk skor ~74).
+  - Skala standard: `0 = Extreme Fear, 100 = Extreme Greed`.
+  - Wajib sertakan penafian kewangan: `Not financial advice / Sentimen pasaran sahaja`.
+- **Kata Kunci & Panggilan**:
+  - Perintah: `/fgi`, `/sentiment`, `/sentimen`, `/fear`, `/greed`.
+  - Bahasa Biasa: `fgi`, `fear and greed`, `fear & greed`, `sentimen pasaran`, `market sentiment`, `sentimen bursa`, `sentimen crypto`, `sentimen us`.
+
+
 
