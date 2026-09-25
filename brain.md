@@ -67,12 +67,10 @@ Jika pengguna bertanya soalan konsep, indikator, atau strategi:
 
 ---
 
-## 7. CARIAN KAUNTER AKTIF PASARAN (MOST ACTIVE SCREENER INTENT)
-- **Kapasiti Kaunter**: Wajib menyediakan senarai penuh **50 kaunter aktif** untuk Bursa Malaysia dan NASDAQ / US.
-- **Strategi Pembahagian Mesej (Telegram Split)**:
-  - Disebabkan had maksimum 4,096 aksara Telegram dan paparan terperinci setiap baris, senarai 50 kaunter dibahagikan secara automatik kepada 2 bahagian mesej kemas:
-    - **Bahagian 1**: Kaunter ranking #1 hingga #25 (~2,600 - 3,000 aksara).
-    - **Bahagian 2**: Kaunter ranking #26 hingga #50 (~2,800 - 3,100 aksara), diakhiri dengan tips carian dan penafian kewangan.
+## 7. CARIAN KAUNTER AKTIF PASARAN (MOST ACTIVE & TRENDING SCREENER INTENT)
+- **Kapasiti Kaunter**:
+  - **Bursa Malaysia & NASDAQ / US**: Senarai penuh **50 kaunter aktif** (dibahagikan 2 bahagian mesej kemas #1-#25 dan #26-#50).
+  - **Pasaran Kripto (CoinGecko)**: Senarai **Top 15 Kripto Aktif & Trending** (dimuatkan kemas dalam 1 mesej pantas < 4,096 aksara).
 - **Sumber Data Rasmi**:
   1. **Bursa Malaysia (Aktif Harian 9.00 AM - 5.00 PM)**:
      - Sumber rujukan: `https://www.shareinvestor.com/prices/stock_prices` (Top Active Counters `DA02`).
@@ -81,10 +79,17 @@ Jika pengguna bertanya soalan konsep, indikator, atau strategi:
   2. **NASDAQ / Pasaran US**:
      - Sumber rujukan: `https://finance.yahoo.com/research-hub/screener/most-active?start=0&count=50` (Yahoo Finance Most Active Screener).
      - Paparkan: Kedudukan (Rank), Ticker Saham, Nama Syarikat, Harga ($), Peratusan Perubahan (+/-), Jumlah Volum Dagangan, dan nama bursa (NasdaqGS / NasdaqCM / NYSE).
+  3. **Pasaran Kripto (CoinGecko Trending Highlights & API)**:
+     - Sumber rujukan: `https://www.coingecko.com/en/highlights/trending-crypto` (API: `https://api.coingecko.com/api/v3/search/trending` + Web Scraper fallback).
+     - Paparkan: Kedudukan (#1 - #15), Nama Kripto, Simbol Ticker (cth: `TRUMP`, `NEAR`, `SOL`), Harga Semasa ($), Perubahan 24 Jam (+/- %) dengan badge (🟢/🔴), Jumlah Volum 24 Jam, serta Kedudukan Market Cap (*Rank #*).
+     - Status Pasaran: Dibuka 24/7 (Pasaran Global Kripto).
+- **Kata Kunci & Panggilan**:
+  - Perintah: `/aktif bursa`, `/aktif nasdaq`, `/aktif kripto`, `/aktif crypto`, `/trending`, `/trending crypto`, `/trending kripto`.
+  - Bahasa Biasa: `aktif kripto`, `trending kripto`, `aktif crypto`, `trending crypto`, `kripto aktif`, `crypto aktif`, `kripto trending`, `crypto trending`, `kaunter aktif bursa`, `kaunter aktif nasdaq`.
 - **Format Jawapan**:
   - DILARANG guna simbol bintang (`*`).
-  - Gunakan emoji kemas (📊, 🏛, 💰, 📦, 🟢, 🔴, ⚪, ☪️, 💡).
-  - Berikan panduan bahawa pengguna boleh terus menaip nama mana-mana kaunter untuk melihat analisis carta teknikal.
+  - Gunakan format HTML Telegram (`<b>`, `<code>`, `<i>`, `<a>`) dan emoji kemas (🔥, 📊, 🏛, 🌐, 🟢, 🔴, ⚪, ☪️, 💡).
+  - Berikan panduan bahawa pengguna boleh terus menaip nama mana-mana kaunter atau kripto (cth: `chart near` atau `sol 1h`) untuk melihat analisis carta teknikal langsung.
   - Wajib sertakan penafian risiko kewangan di bahagian bawah.
 
 ---

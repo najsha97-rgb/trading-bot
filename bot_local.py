@@ -793,6 +793,145 @@ def get_nasdaq_active_cards(limit: int = 50) -> list[str]:
         return [f"⚠️ Ralat memproses data kaunter aktif NASDAQ: {e}"]
 
 
+_crypto_trending_cache = {"data": None, "timestamp": 0}
+
+def fmt_crypto_price(p) -> str:
+    try:
+        val = float(p)
+        if val >= 1000:
+            return f"${val:,.2f}"
+        elif val >= 1:
+            return f"${val:,.2f}"
+        elif val >= 0.01:
+            return f"${val:,.4f}"
+        elif val >= 0.0001:
+            return f"${val:,.6f}"
+        else:
+            return f"${val:.8f}"
+    except Exception:
+        return f"${p}"
+
+def get_crypto_trending_cards(limit: int = 15) -> list[str]:
+    """
+    Mengambil senarai kripto paling aktif & trending di pasaran global
+    terus daripada CoinGecko Trending Highlights (API & Web Scraper Fallback).
+    https://www.coingecko.com/en/highlights/trending-crypto
+    """
+    import time as _pytime
+    global _crypto_trending_cache
+    now_ts = _pytime.time()
+
+    # Semak cache dalam memori (60 saat)
+    if _crypto_trending_cache["data"] and (now_ts - _crypto_trending_cache["timestamp"] < 60):
+        return _crypto_trending_cache["data"]
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.coingecko.com/en/highlights/trending-crypto"
+    }
+
+    coins = []
+    # 1. Cubaan melalui CoinGecko Trending Search API
+    try:
+        r = requests.get("https://api.coingecko.com/api/v3/search/trending", headers=headers, timeout=10)
+        if r.status_code == 200:
+            raw_coins = r.json().get("coins", [])
+            for c in raw_coins[:limit]:
+                item = c.get("item", {})
+                d = item.get("data", {})
+                coins.append({
+                    "name": item.get("name", "").strip(),
+                    "symbol": item.get("symbol", "").strip().upper(),
+                    "rank": item.get("market_cap_rank"),
+                    "price": d.get("price", 0),
+                    "change_24h": d.get("price_change_percentage_24h", {}).get("usd", 0),
+                    "volume": d.get("total_volume", "-"),
+                })
+    except Exception as e:
+        logger.warning("Ralat CoinGecko trending API: %s", e)
+
+    # 2. Fallback Scraper Webpage jika API disekat atau gagal
+    if not coins:
+        try:
+            r_web = requests.get("https://www.coingecko.com/en/highlights/trending-crypto", headers=headers, timeout=10)
+            if r_web.status_code == 200 and BeautifulSoup:
+                soup = BeautifulSoup(r_web.text, "html.parser")
+                table = soup.find("table")
+                if table:
+                    rows = table.find_all("tr")
+                    for row in rows:
+                        tds = row.find_all("td")
+                        if len(tds) >= 8:
+                            mcap_rank = tds[1].text.strip()
+                            name_text = tds[2].text.strip().split("\n")
+                            c_name = name_text[0].strip() if name_text else ""
+                            c_sym = name_text[-1].strip().upper() if len(name_text) > 1 else ""
+                            c_price = tds[4].text.strip().replace("$", "").replace(",", "")
+                            c_chg = tds[6].text.strip().replace("%", "").replace("+", "")
+                            c_vol = tds[8].text.strip()
+                            if c_name and c_sym:
+                                coins.append({
+                                    "name": c_name,
+                                    "symbol": c_sym,
+                                    "rank": mcap_rank if mcap_rank.isdigit() else None,
+                                    "price": c_price,
+                                    "change_24h": c_chg,
+                                    "volume": c_vol,
+                                })
+                        if len(coins) >= limit:
+                            break
+        except Exception as e:
+            logger.warning("Ralat CoinGecko web scraper fallback: %s", e)
+
+    if not coins:
+        return [(
+            "⚠️ <b>Gagal memuat turun data trending kripto daripada CoinGecko buat masa ini.</b>\n"
+            "Sila layari terus: <a href=\"https://www.coingecko.com/en/highlights/trending-crypto\">CoinGecko Trending Crypto</a>\n\n"
+            f"{DISCLAIMER_HTML}"
+        )]
+
+    tz = ZoneInfo("Asia/Kuala_Lumpur")
+    now = datetime.now(tz)
+    time_str = now.strftime("%d %b %Y, %I:%M %p")
+    rank_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+    lines = [
+        f"🔥 <b>TOP {len(coins)} KRIPTO AKTIF & TRENDING (CoinGecko)</b>",
+        "🌐 Sumber: <a href=\"https://www.coingecko.com/en/highlights/trending-crypto\">CoinGecko Trending Highlights</a>",
+        "⏱ Pasaran: 🟢 <b>Dibuka 24/7 (Pasaran Global Kripto)</b>",
+        f"🕒 Dikemaskini: <code>{time_str} MYT</code>",
+        "────────────────────────",
+    ]
+
+    for i, c in enumerate(coins):
+        rk = rank_emojis[i] if i < len(rank_emojis) else f"<b>{i+1}.</b>"
+        name = c["name"]
+        sym = c["symbol"]
+        mcap_rank = c["rank"]
+        rank_str = f"Rank #{mcap_rank}" if mcap_rank else "Unranked"
+
+        try:
+            chg_val = float(c["change_24h"])
+            badge = "🟢" if chg_val > 0 else ("🔴" if chg_val < 0 else "⚪")
+            sign = "+" if chg_val > 0 else ""
+            chg_str = f"{badge} {sign}{chg_val:.2f}%"
+        except Exception:
+            chg_str = f"⚪ {c['change_24h']}%"
+
+        price_str = fmt_crypto_price(c["price"])
+        vol_str = c["volume"] if c["volume"] != "-" else "-"
+        lines.append(f"{rk} <b>{name}</b> (<code>{sym}</code>) — <b>{price_str}</b> | {chg_str} | Vol: <code>{vol_str}</code> | <i>{rank_str}</i>")
+
+    lines.append("\n💡 <i>Tip: Taip nama atau simbol mana-mana kripto (cth: <code>chart near</code> atau <code>sol 1h</code>) untuk analisis teknikal TradingView & carta candlestick langsung.</i>\n")
+    lines.append(DISCLAIMER_HTML)
+
+    result = ["\n".join(lines)]
+    _crypto_trending_cache["data"] = result
+    _crypto_trending_cache["timestamp"] = now_ts
+    return result
+
+
 # ── Fear & Greed Index (US Stocks, Crypto, Bursa Malaysia) ────────────────────
 
 def render_gauge_bar(score: int, length: int = 10) -> str:
@@ -1323,13 +1462,14 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
     if command == "/start":
         await send_message(client, chat_id,
             "👋 <b>Selamat Datang ke AI Trading Assistant!</b>\n"
-            "Disambungkan terus ke TradingView, ShareInvestor (Bursa) & Yahoo Finance (NASDAQ).\n"
+            "Disambungkan terus ke TradingView, ShareInvestor (Bursa), Yahoo Finance (NASDAQ) & CoinGecko (Kripto).\n"
             "────────────────────────\n\n"
             "💡 <b>Paling Mudah:</b> Anda <b>TIDAK PERLU</b> taip simbol '/' langsung! Boleh taip nama saham atau tanya soalan macam biasa.\n\n"
             "📌 <b>Contoh Taip Terus (Tanpa '/'):</b>\n"
             "🔹 <code>fgi</code> — Fear & Greed Index (US Stocks, Kripto & Bursa Malaysia)\n"
-            "🔹 <code>kaunter aktif bursa</code> — Top 50 Kaunter Aktif Harian (ShareInvestor 9am-5pm)\n"
-            "🔹 <code>kaunter aktif nasdaq</code> — Top 50 Saham Paling Aktif US (Yahoo Finance)\n"
+            "🔹 <code>aktif bursa</code> — Top 50 Kaunter Aktif Harian (ShareInvestor 9am-5pm)\n"
+            "🔹 <code>aktif nasdaq</code> — Top 50 Saham Paling Aktif US (Yahoo Finance)\n"
+            "🔹 <code>aktif kripto</code> @ <code>trending kripto</code> — Top 15 Kripto Trending (CoinGecko)\n"
             "🔹 <code>chart xrp</code> atau <code>sol 4h</code> — Analisis Kripto & Carta Lilin\n"
             "🔹 <code>maybank</code> atau <code>cimb</code> — Saham Bursa Malaysia\n"
             "🔹 <code>nvda</code> atau <code>tsla 1d</code> — Saham US / NASDAQ\n"
@@ -1337,13 +1477,13 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
             "🔹 <i>'panduan indikator'</i> — Cara pasang RSI & EMA\n"
             "🔹 <i>'setup alert'</i> — Cara sambung webhook TradingView\n\n"
             "🤖 Boleh juga gunakan arahan standard:\n"
-            "🔹 <code>/fgi</code> | <code>/aktif bursa</code> | <code>/aktif nasdaq</code> | <code>/status BTC</code> | <code>/clear</code>"
+            "🔹 <code>/fgi</code> | <code>/aktif bursa</code> | <code>/aktif nasdaq</code> | <code>/aktif kripto</code> | <code>/trending</code> | <code>/status BTC</code>"
         )
     elif command in ["/status", "/ta", "/analisa"]:
         await handle_status_command(client, chat_id, args)
     elif command in ["/fgi", "/sentiment", "/sentimen", "/fear", "/greed"]:
         await handle_fgi_command(client, chat_id)
-    elif command in ["/aktif", "/active", "/top", "/mostactive"]:
+    elif command in ["/aktif", "/active", "/top", "/mostactive", "/trending"]:
         sub = args[0].lower() if args else ""
         if "bursa" in sub or "my" in sub or "malaysia" in sub:
             for card in get_bursa_active_cards(50):
@@ -1351,10 +1491,15 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
         elif "nasdaq" in sub or "us" in sub or "nyse" in sub:
             for card in get_nasdaq_active_cards(50):
                 await send_message(client, chat_id, card)
+        elif "crypto" in sub or "kripto" in sub or "coin" in sub or command == "/trending":
+            for card in get_crypto_trending_cards(15):
+                await send_message(client, chat_id, card)
         else:
             for card in get_bursa_active_cards(50):
                 await send_message(client, chat_id, card)
             for card in get_nasdaq_active_cards(50):
+                await send_message(client, chat_id, card)
+            for card in get_crypto_trending_cards(15):
                 await send_message(client, chat_id, card)
     elif command in ["/indicator", "/indikator"]:
         await send_message(client, chat_id, get_indicator_guide())
@@ -1368,6 +1513,7 @@ async def handle_command(client: httpx.AsyncClient, chat_id: str, command: str, 
             "🔹 <b>Fear & Greed Index:</b> Taip <i>'fgi'</i>, <i>'sentimen'</i> atau <code>/fgi</code>\n"
             "🔹 <b>Kaunter Aktif Bursa:</b> Taip <i>'kaunter aktif bursa'</i> atau <code>/aktif bursa</code>\n"
             "🔹 <b>Kaunter Aktif NASDAQ:</b> Taip <i>'kaunter aktif nasdaq'</i> atau <code>/aktif nasdaq</code>\n"
+            "🔹 <b>Kripto Trending Aktif:</b> Taip <i>'aktif kripto'</i>, <i>'trending kripto'</i> atau <code>/trending</code>\n"
             "🔹 <b>Carian Ticker Pantas:</b> Taip <code>btc</code>, <code>maybank</code>, <code>nvda</code>, atau <code>sol 4h</code>\n"
             "🔹 <b>Carta Teknikal:</b> Taip <i>'chart xrp'</i>, <i>'carta btc'</i> atau <i>'graf maybank'</i>\n"
             "🔹 <b>Panduan Indikator:</b> Taip <i>'indikator'</i> atau <code>/indicator</code>\n"
@@ -1470,28 +1616,41 @@ async def main():
                             await handle_fgi_command(client, chat_id)
                             continue
 
-                        # 2.5 Kaunter Aktif Pasaran (Bursa Malaysia via ShareInvestor & NASDAQ via Yahoo Finance)
+                        # 2.5 Kaunter Aktif Pasaran (Bursa Malaysia, NASDAQ US & Trending Crypto CoinGecko)
                         if any(k in clean_lower for k in [
                             "kaunter aktif", "top aktif", "saham aktif", "most active", "top volume",
                             "aktif bursa", "bursa aktif", "aktif nasdaq", "nasdaq aktif",
+                            "aktif kripto", "aktif crypto", "kripto aktif", "crypto aktif",
+                            "trending kripto", "trending crypto", "kripto trending", "crypto trending",
+                            "top trending", "trending coin", "trending coins",
                             "50 kaunter", "senarai kaunter", "kaunter paling aktif"
                         ]):
                             is_bursa = any(b in clean_lower for b in ["bursa", "malaysia", "klse", "my"])
                             is_nasdaq = any(n in clean_lower for n in ["nasdaq", "us", "amerika", "nyse"])
+                            is_crypto = any(c in clean_lower for c in ["kripto", "crypto", "coin", "coins", "coingecko"])
 
-                            if is_bursa and not is_nasdaq:
+                            if is_crypto and not is_bursa and not is_nasdaq:
+                                for card in get_crypto_trending_cards(15):
+                                    await send_message(client, chat_id, card)
+                                continue
+                            elif is_bursa and not is_nasdaq and not is_crypto:
                                 for card in get_bursa_active_cards(50):
                                     await send_message(client, chat_id, card)
                                 continue
-                            elif is_nasdaq and not is_bursa:
+                            elif is_nasdaq and not is_bursa and not is_crypto:
                                 for card in get_nasdaq_active_cards(50):
                                     await send_message(client, chat_id, card)
                                 continue
                             else:
-                                for card in get_bursa_active_cards(50):
-                                    await send_message(client, chat_id, card)
-                                for card in get_nasdaq_active_cards(50):
-                                    await send_message(client, chat_id, card)
+                                if is_bursa or (not is_nasdaq and not is_crypto):
+                                    for card in get_bursa_active_cards(50):
+                                        await send_message(client, chat_id, card)
+                                if is_nasdaq or (not is_bursa and not is_crypto):
+                                    for card in get_nasdaq_active_cards(50):
+                                        await send_message(client, chat_id, card)
+                                if is_crypto or (not is_bursa and not is_nasdaq):
+                                    for card in get_crypto_trending_cards(15):
+                                        await send_message(client, chat_id, card)
                                 continue
 
                         # 3. Permintaan Carta & Analisis Pasaran
