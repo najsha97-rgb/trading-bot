@@ -86,14 +86,40 @@ DISCLAIMER_HTML = (
     "bukan nasihat pelaburan atau kewangan. Sentiasa lakukan kajian anda sendiri (DYOR).</i>"
 )
 
-def attach_disclaimer(text: str) -> str:
-    """Sertakan penafian bukan nasihat kewangan jika belum wujud."""
+def strip_disclaimer(text: str) -> str:
+    """Membuang sebarang perenggan penafian daripada teks untuk mengelakkan penduaan."""
     if not text:
         return ""
-    lower = text.lower()
-    if any(k in lower for k in ["bukan nasihat kewangan", "penafian:", "dyor", "not financial advice"]):
-        return text
-    return f"{text.rstrip()}\n\n{DISCLAIMER_HTML}"
+    lines = text.split("\n")
+    cleaned = []
+    skip = False
+    for line in lines:
+        l = line.lower().strip()
+        if any(l.startswith(k) for k in [
+            "⚠️ penafian", "penafian:", "penafian :", "nota penafian", "peringatan risiko",
+            "⚠️ disclaimer", "disclaimer:", "disclaimer :", "⚠️ dyor", "dyor:"
+        ]) or (
+            ("penafian" in l or "bukan nasihat" in l or "dyor" in l) and
+            ("kewangan" in l or "pelaburan" in l or "pembelajaran" in l or "kajian" in l)
+        ):
+            skip = True
+            continue
+        if skip and (not line.strip() or line.strip().startswith("⚠️") or "nasihat" in l):
+            continue
+        skip = False
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+def ensure_single_disclaimer(text: str) -> str:
+    """Memastikan teks mesej hanya mengandungi tepat SATU penafian rasmi di hujung."""
+    if not text:
+        return ""
+    cleaned = strip_disclaimer(text)
+    return f"{cleaned.rstrip()}\n\n{DISCLAIMER_HTML}"
+
+def attach_disclaimer(text: str) -> str:
+    """Sertakan penafian bukan nasihat kewangan dengan jaminan tepat SEKALI sahaja."""
+    return ensure_single_disclaimer(text)
 
 
 # ── Most Active Screener (Bursa Malaysia & NASDAQ) ────────────────────────────
@@ -1414,14 +1440,14 @@ def tradingview_alert():
 
         ai_prompt = (
             f"Alert triggered: {action} on {ticker} at price {price}. "
-            f"Beri ulasan teknikal & peringatan risiko dalam 2 baris ringkas tanpa simbol bintang."
+            f"Beri ulasan teknikal & peringatan risiko dalam 2 baris ringkas tanpa simbol bintang dan tanpa penafian."
         )
-        ai_analysis = call_gemini(ai_prompt)
+        ai_analysis = strip_disclaimer(call_gemini(ai_prompt))
         if ai_analysis:
             lines.append(f"\n💡 <b>Ulasan AI:</b>\n{ai_analysis}")
         lines.append(f"\n{DISCLAIMER_HTML}")
 
-        formatted_msg = "\n".join(lines)
+        formatted_msg = ensure_single_disclaimer("\n".join(lines))
         send_telegram(formatted_msg)
 
         return jsonify({"status": "ok", "message": "Alert sent to Telegram"}), 200
@@ -1574,8 +1600,9 @@ def telegram_webhook():
                 rsi_str += " 💡 Oversold"
 
             ai_text = call_gemini(
-                f"TradingView data for {ta_data['symbol']} ({ta_data['market']}): Price {price_str}, RSI {ta_data['rsi']}, Signal {rec}, EMA20 {ta_data['ema20']}, EMA50 {ta_data['ema50']}. Ulas dalam 3 baris ringkas tanpa simbol bintang."
+                f"TradingView data for {ta_data['symbol']} ({ta_data['market']}): Price {price_str}, RSI {ta_data['rsi']}, Signal {rec}, EMA20 {ta_data['ema20']}, EMA50 {ta_data['ema50']}. Ulas dalam 3 baris ringkas tanpa simbol bintang dan tanpa penafian."
             )
+            ai_text_clean = strip_disclaimer(ai_text)
             msg = (
                 f"📊 <b>ANALISIS PASARAN: {ta_data['symbol']}</b>\n"
                 f"🏛 Pasaran: <b>{ta_data['market']}</b> ({ta_data['exchange']})\n"
@@ -1590,10 +1617,11 @@ def telegram_webhook():
                 f"🔹 <b>EMA 20:</b> <code>{curr}{ta_data['ema20']:,.2f}</code>\n"
                 f"🔹 <b>EMA 50:</b> <code>{curr}{ta_data['ema50']:,.2f}</code>\n"
                 f"🔹 <b>EMA 200:</b> <code>{curr}{ta_data['ema200']:,.2f}</code>\n\n"
-                f"💡 <b>Ulasan AI:</b>\n{ai_text}\n\n"
+                f"💡 <b>Ulasan AI:</b>\n{ai_text_clean}\n\n"
                 f"🌐 <a href=\"{ta_data['chart_url']}\">Buka Carta di TradingView</a>\n\n"
                 f"{DISCLAIMER_HTML}\n"
             )
+            msg = ensure_single_disclaimer(msg)
             chart_bytes = generate_candlestick_chart(ta_data["symbol"], ta_data["interval"], ta_data["market"])
             if chart_bytes:
                 send_telegram_photo(chart_bytes, msg, chat_id=chat_id)

@@ -571,12 +571,40 @@ DISCLAIMER_HTML = (
     "bukan nasihat pelaburan atau kewangan. Sentiasa lakukan kajian anda sendiri (DYOR).</i>"
 )
 
+def strip_disclaimer(text: str) -> str:
+    """Membuang sebarang perenggan penafian daripada teks untuk mengelakkan penduaan."""
+    if not text:
+        return ""
+    lines = text.split("\n")
+    cleaned = []
+    skip = False
+    for line in lines:
+        l = line.lower().strip()
+        if any(l.startswith(k) for k in [
+            "⚠️ penafian", "penafian:", "penafian :", "nota penafian", "peringatan risiko",
+            "⚠️ disclaimer", "disclaimer:", "disclaimer :", "⚠️ dyor", "dyor:"
+        ]) or (
+            ("penafian" in l or "bukan nasihat" in l or "dyor" in l) and
+            ("kewangan" in l or "pelaburan" in l or "pembelajaran" in l or "kajian" in l)
+        ):
+            skip = True
+            continue
+        if skip and (not line.strip() or line.strip().startswith("⚠️") or "nasihat" in l):
+            continue
+        skip = False
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+def ensure_single_disclaimer(text: str) -> str:
+    """Memastikan teks mesej hanya mengandungi tepat SATU penafian rasmi di hujung."""
+    if not text:
+        return ""
+    cleaned = strip_disclaimer(text)
+    return f"{cleaned.rstrip()}\n\n{DISCLAIMER_HTML}"
+
 def attach_disclaimer(text: str) -> str:
-    """Sertakan penafian bukan nasihat kewangan jika belum wujud."""
-    lower = text.lower()
-    if any(k in lower for k in ["bukan nasihat kewangan", "penafian:", "dyor", "not financial advice"]):
-        return text
-    return f"{text.rstrip()}\n\n{DISCLAIMER_HTML}"
+    """Sertakan penafian bukan nasihat kewangan dengan jaminan tepat SEKALI sahaja."""
+    return ensure_single_disclaimer(text)
 
 
 # ── Most Active Screener (Bursa Malaysia & NASDAQ) ────────────────────────────
@@ -1366,7 +1394,7 @@ async def ask_gemini(chat_id: str, user_message: str, context: str = "", add_dis
         prompt_to_send = (
             f"Data Pasaran TradingView:\n{context}\n\n"
             f"Soalan Pengguna: {user_message}\n"
-            f"Peringatan: JANGAN gunakan simbol bintang (*). Gunakan ikon (🔹, 📈, 📉, 💡) untuk senarai."
+            f"Peringatan: JANGAN gunakan simbol bintang (*). Gunakan ikon (🔹, 📈, 📉, 💡) untuk senarai. JANGAN sertakan kenyataan penafian (disclaimer) kerana sistem bot akan meletakkannya di hujung mesej secara automatik."
         )
 
     history = conversations.setdefault(chat_id, [])
@@ -1456,6 +1484,8 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
         context=ta_context,
         add_disclaimer=False,
     )
+    # Buang sebarang penafian daripada ulasan AI bagi mengelakkan penduaan
+    ai_comment_clean = strip_disclaimer(ai_comment)
 
     msg = (
         f"📊 <b>ANALISIS PASARAN: {ta['symbol']}</b>\n"
@@ -1472,10 +1502,12 @@ async def handle_status_command(client: httpx.AsyncClient, chat_id: str, args: l
         f"🔹 <b>EMA 50:</b> <code>{curr}{ta['ema50']:,.2f}</code>\n"
         f"🔹 <b>EMA 200:</b> <code>{curr}{ta['ema200']:,.2f}</code>\n\n"
         f"💡 <b>Ulasan AI:</b>\n"
-        f"{ai_comment}\n\n"
+        f"{ai_comment_clean}\n\n"
         f"🌐 <a href=\"{ta['chart_url']}\">Buka Carta di TradingView</a>\n\n"
         f"{DISCLAIMER_HTML}"
     )
+    # Jaminan mutlak: Hanya tepat SATU penafian sahaja di hujung kad analisis
+    msg = ensure_single_disclaimer(msg)
 
     # Jana carta candlestick secara latar (non-blocking)
     chart_bytes = await asyncio.to_thread(generate_candlestick_chart, ta["symbol"], ta["interval"], ta["market"])
