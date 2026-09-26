@@ -1,11 +1,14 @@
 fastapi
 uvicorn[standard]
+gunicorn
 httpx
 google-genai
 python-dotenv
 requests
 flask
+beautifulsoup4
 tradingview-ta
 matplotlib
 pandas
 yfinance
+numpy

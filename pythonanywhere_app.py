@@ -1787,20 +1787,51 @@ def telegram_webhook():
         return "OK", 200
 
 
-# ── Health Check ──────────────────────────────────────────────────────────────
+# ── Health Check & Webhook Setup ──────────────────────────────────────────────
 
 @app.route("/", methods=["GET"])
 def index():
     return jsonify({
         "status": "online",
         "service": "TradingView & Telegram Bot",
-        "platform": "PythonAnywhere",
+        "platform": "Render / PythonAnywhere",
         "endpoints": {
             "tradingview_webhook": "/tradingview",
             "telegram_webhook": "/webhook",
+            "set_webhook": "/set-webhook",
         }
     })
 
+@app.route("/set-webhook", methods=["GET"])
+def set_webhook_route():
+    """Buka pautan ini sekali sahaja di pelayar web selepas deploy di Render
+    untuk menyambungkan bot Telegram secara automatik.
+    Contoh: https://nama-bot-anda.onrender.com/set-webhook
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        return jsonify({"status": "error", "message": "TELEGRAM_BOT_TOKEN belum ditetapkan dalam Environment Variables."}), 400
+
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    base_url = render_url or request.host_url.rstrip("/")
+    if base_url.startswith("http://") and "onrender.com" in base_url:
+        base_url = "https://" + base_url[7:]
+
+    custom_url = request.args.get("url")
+    webhook_target = custom_url or f"{base_url}/webhook"
+
+    tg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+    try:
+        r = requests.post(tg_url, json={"url": webhook_target}, timeout=10)
+        res_data = r.json()
+        return jsonify({
+            "status": "success" if res_data.get("ok") else "failed",
+            "webhook_target": webhook_target,
+            "telegram_response": res_data
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
